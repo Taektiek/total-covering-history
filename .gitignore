@@ -22,3 +22,8 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Solver artifacts
+solver/cache/
+solver/fetch.log
+__pycache__/
