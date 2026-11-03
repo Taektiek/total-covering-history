@@ -8,7 +8,7 @@ const MAX_TL_HEIGHT = 220;
 const DATES_PX = 70;   // bar pixel width at which dates appear on the bar
 const NAME_PX = 150;   // bar pixel width at which the name appears too
 
-export default function Timeline({ people, view, setView, bounds, gaps, range, onGapClick, wikiTitles, onHover, onSelectPerson, T }) {
+export default function Timeline({ people, view, setView, bounds, gaps, range, onGapClick, hideGaps = false, wikiTitles, onHover, onSelectPerson, T }) {
   const tlRef = useRef(null);
   const dragRef = useRef(null);
   const justDraggedRef = useRef(false);
@@ -123,8 +123,13 @@ export default function Timeline({ people, view, setView, bounds, gaps, range, o
             background: "rgba(212,168,67,0.10)", borderTop: "2px solid #d4a843", borderBottom: "2px solid #d4a843",
             pointerEvents: "none", zIndex: 5 }} />
         )}
-        {/* gaps (clickable to start a gap challenge) */}
-        {gaps.map(([s, e], i) => {
+        {/* gaps (clickable to start a gap challenge) — hidden by the mystery-gaps lab */}
+        {hideGaps && gaps.length > 0 && (
+          <div style={{ position: "absolute", top: 6, left: 8, zIndex: 4, fontSize: 10, color: T.gapDash, background: T.surface, border: `1px dashed ${T.gapDash}`, borderRadius: 8, padding: "2px 8px", pointerEvents: "none" }}>
+            ❓ {gaps.length} {gaps.length === 1 ? "gap" : "gaps"} hidden
+          </div>
+        )}
+        {!hideGaps && gaps.map(([s, e], i) => {
           const l = Math.max(pctInView(s), 0), r = Math.min(pctInView(e), 100);
           if (r <= 0 || l >= 100) return null;
           return (
@@ -185,7 +190,7 @@ export default function Timeline({ people, view, setView, bounds, gaps, range, o
       </div>
       <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: T.faint, marginTop: 5, padding: "0 2px" }}>
         <span>{yearLabel(Math.round(view[0]))}</span>
-        <span style={{ color: T.muted }}>drag to pan · shift+drag to zoom · click a red gap to challenge it</span>
+        <span style={{ color: T.muted }}>drag to pan · shift+drag to zoom{!hideGaps ? " · click a red gap to challenge it" : ""}</span>
         <span>{yearLabel(Math.round(view[1]))}</span>
       </div>
     </div>

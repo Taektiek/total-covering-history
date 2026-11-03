@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react";
 import { yearLabel, fetchPersonDetails, wikiUrl } from "./lib";
 
-export default function PersonCard({ person, allPeople, onClose, onSelectPerson, T }) {
+export default function PersonCard({ person, allPeople, onClose, onSelectPerson, marginal = null, T }) {
   const [details, setDetails] = useState(null);
   const overlaps = allPeople.filter(p => p.id !== person.id && p.birth < person.death && p.death > person.birth);
   useEffect(() => { fetchPersonDetails(person.id).then(setDetails); }, [person.id]);
@@ -26,6 +26,9 @@ export default function PersonCard({ person, allPeople, onClose, onSelectPerson,
             <div>
               <div style={{ fontSize: 22, fontWeight: 800, color: "#fff", letterSpacing: -0.5 }}>{person.label}</div>
               <div style={{ fontSize: 13, color: "rgba(255,255,255,0.8)", marginTop: 3 }}>{yearLabel(person.birth)} — {yearLabel(person.death)}</div>
+              {typeof marginal === "number" && marginal > 0 && (
+                <div style={{ fontSize: 11, color: "rgba(255,255,255,0.9)", marginTop: 2 }}>⛓ holds {marginal} years alone on this timeline</div>
+              )}
               {person.desc && <div style={{ fontSize: 12, color: "rgba(255,255,255,0.7)", marginTop: 4, fontStyle: "italic" }}>{person.desc}</div>}
             </div>
           </div>

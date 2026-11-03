@@ -2,11 +2,17 @@ import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import {
   PRESENT, MIN_SPAN, COLORS, DARK, LIGHT,
   yearLabel, wikiUrl, computeCoverage, searchPeople, fetchPersonDates, fetchPersonFull,
-  fetchWikiTitles, CATEGORIES, checkCategory,
+  fetchWikiTitles, fetchPeopleDates, suggestBridgers, CATEGORIES, checkCategory,
 } from "./lib";
+import {
+  LAB_DEFS, loadLabs, saveLabs, loadRecords, recordResult,
+  canAddPerson, marginalYears, nextLargestGap, nearMiss,
+  encodeShare, decodeShare, PARS, medalFor,
+} from "./labs.js";
 import Timeline from "./Timeline";
 import PersonCard from "./PersonCard";
 import StartScreen from "./StartScreen";
+import LabsPanel from "./LabsPanel";
 
 export default function App() {
   const [screen, setScreen] = useState("start"); // "start" | "game"
@@ -29,6 +35,19 @@ export default function App() {
   const [starting, setStarting] = useState(false);
   const [wikiTitles, setWikiTitles] = useState({});
   const [wonDismissed, setWonDismissed] = useState(false);
+
+  // labs (toggleable experiments) — see docs/fun-techniques.md
+  const [{ labs, opts }, setLabsState] = useState(() => loadLabs());
+  const [showLabs, setShowLabs] = useState(false);
+  const [records, setRecords] = useState(() => loadRecords());
+  const [chain, setChain] = useState(0);
+  const [notice, setNotice] = useState("");
+  const [sugDates, setSugDates] = useState({});   // qid -> dates, for the Δ-preview lab
+  const [bridgers, setBridgers] = useState([]);   // 💡 candidates for the target gap
+  const [bridgersLoading, setBridgersLoading] = useState(false);
+  const undoRef = useRef([]);
+  const [undoDepth, setUndoDepth] = useState(0);
+  const shareLoadedRef = useRef(false);
 
   const [challengeRange, setChallengeRange] = useState(null); // gap-challenge range
   const [customStart, setCustomStart] = useState("");
@@ -104,6 +123,74 @@ export default function App() {
     }
   }, []);
 
+  // ------------------------------------------------------------ labs
+  const updateLabs = (fn) => setLabsState(prev => {
+    const next = fn(prev);
+    saveLabs(next.labs, next.opts);
+    return next;
+  });
+  const toggleLab = (id, on) => updateLabs(prev => ({ ...prev, labs: { ...prev.labs, [id]: on } }));
+  const setOpt = (k, v) => updateLabs(prev => ({ ...prev, opts: { ...prev.opts, [k]: v } }));
+  const applyPlayset = (ids) => updateLabs(prev => ({
+    labs: Object.fromEntries(LAB_DEFS.map(d => [d.id, ids ? ids.includes(d.id) : false])),
+    opts: prev.opts,
+  }));
+  const activeLabIds = LAB_DEFS.map(d => d.id).filter(id => labs[id]);
+
+  // share-link lab: auto-load a game encoded in the URL hash (mount-time init)
+  useEffect(() => {
+    if (shareLoadedRef.current || !labs.shareLink) return;
+    const h = window.location.hash;
+    if (!h.startsWith("#c=")) return;
+    shareLoadedRef.current = true;
+    const t = setTimeout(() => {
+      try {
+        const payload = decodeShare(h.slice(3));
+        if (payload?.challenge?.anchorId && Array.isArray(payload.ids)) {
+          startChallenge(payload.challenge, payload.ids, Array.isArray(payload.range) ? payload.range : null);
+        }
+      } catch { /* bad hash — ignore */ }
+    }, 0);
+    return () => clearTimeout(t);
+  }, [labs.shareLink, startChallenge]);
+
+  const handleShare = () => {
+    const payload = {
+      v: 1,
+      challenge: {
+        key: challenge.key, name: challenge.name, mode: challenge.mode,
+        anchorId: challenge.anchorId, endId: challenge.endId, endYear: challenge.endYear,
+        custom: challenge.custom,
+      },
+      ids: people.filter(p => !isChallengePerson(p.id)).map(p => p.id),
+      ...(challengeRange ? { range: [Math.round(challengeRange[0]), Math.round(challengeRange[1])] } : {}),
+    };
+    const url = `${window.location.origin}${window.location.pathname}#c=${encodeShare(payload)}`;
+    if (navigator.clipboard?.writeText) {
+      navigator.clipboard.writeText(url).then(
+        () => setNotice("🔗 Link copied — opening it loads this exact game."),
+        () => setNotice(url));
+    } else setNotice(url);
+  };
+
+  // undo lab: Ctrl+Z / ↩ button reverts the last add/remove
+  const doUndo = useCallback(() => {
+    const snap = undoRef.current.pop();
+    if (!snap) return;
+    setUndoDepth(d => Math.max(0, d - 1));
+    setPeople(snap.people);
+    setChallengeRange(snap.challengeRange);
+    setNotice("↩ Undone.");
+  }, []);
+  useEffect(() => {
+    if (!labs.undo) return;
+    const onKey = (e) => {
+      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === "z") { e.preventDefault(); doUndo(); }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [labs.undo, doUndo]);
+
   // ------------------------------------------------------------ game state
   const bounds = challenge?.bounds ?? null;
   const SPAN = bounds ? bounds[1] - bounds[0] : 1;
@@ -126,6 +213,32 @@ export default function App() {
     : [];
 
   const sortedPeople = [...people].sort((a, b) => a.birth - b.birth);
+
+  // labs-derived state
+  const par = labs.parMedals && challenge ? (PARS[challenge.key] ?? null) : null;
+  const largestGap = gaps.length ? [...gaps].sort((a, b) => (b[1] - b[0]) - (a[1] - a[0]))[0] : null;
+  const targetGap = challengeRange ?? largestGap;
+  const marginal = useMemo(() => {
+    if (!labs.holdsYears || !bounds) return {};
+    return Object.fromEntries(people.map(p => [p.id, marginalYears(p, people, bounds)]));
+  }, [labs.holdsYears, people, bounds]);
+
+  // Δ-preview lab: batch-fetch dates for the visible suggestions
+  useEffect(() => {
+    if (!labs.deltaPreview || suggestions.length === 0) return;
+    let cancelled = false;
+    fetchPeopleDates(suggestions.map(s => s.id)).then(d => { if (!cancelled) setSugDates(d); });
+    return () => { cancelled = true; };
+  }, [suggestions, labs.deltaPreview]);
+
+  // 💡 bridger suggestions for the target gap
+  const loadBridgers = async () => {
+    if (!targetGap) return;
+    setBridgersLoading(true); setBridgers([]);
+    const cands = await suggestBridgers(targetGap[0], targetGap[1], challenge?.mode ?? null, 6);
+    setBridgers(cands.filter(c => !people.find(p => p.id === c.id)));
+    setBridgersLoading(false);
+  };
 
   // fetch Wikipedia article titles for everyone in the list (for list links)
   const idsKey = useMemo(() => people.map(p => p.id).join("|"), [people]);
@@ -153,7 +266,7 @@ export default function App() {
 
   // ------------------------------------------------------------ add / remove
   const handleInput = (val) => {
-    setInputVal(val); setError("");
+    setInputVal(val); setError(""); setNotice("");
     clearTimeout(debounceRef.current);
     if (val.length < 2) { setSuggestions([]); return; }
     setLoading(true);
@@ -188,14 +301,76 @@ export default function App() {
       setError(`"${item.label}" died before ${anchor.label}'s death — can't help cover the timeline.`);
       setInputVal(""); return;
     }
+
+    // labs: core-level legality (frontier-only overlap cap, budget cap)
+    const labCheck = canAddPerson({ ...dates, id: item.id, label: item.label }, people, labs, opts, bounds);
+    if (!labCheck.ok) {
+      setFetchingId(null);
+      setError(`🧪 ${labCheck.reason}`);
+      setInputVal(""); return;
+    }
+
     const before = computeCoverage(people, bounds).total;
     const after = computeCoverage([...people, { ...dates, id: item.id, color: "#fff" }], bounds).total;
     setFetchingId(null);
     if (after <= before) { setError(`"${item.label}" (${yearLabel(dates.birth)}–${yearLabel(dates.death)}) is already fully covered — adds nothing new.`); setInputVal(""); return; }
+    if (labs.undo) {
+      undoRef.current.push({ people, challengeRange });
+      if (undoRef.current.length > 50) undoRef.current.shift();
+      setUndoDepth(d => d + 1);
+    }
     const color = COLORS[people.length % COLORS.length];
-    setPeople(prev => [...prev, { ...dates, id: item.id, color, desc: item.desc || "" }]);
+    const cand = { ...dates, id: item.id, color, desc: item.desc || "" };
+    const withNew = [...people, cand];
+    setPeople(withNew);
+    if (labs.deltaPreview) setNotice(`Added ${item.label} — +${Math.round(after - before)} years covered.`);
+    if (labs.nearMiss) {
+      const target = challengeRange ?? largestGap;
+      if (target) {
+        const nm = nearMiss({ birth: dates.birth, death: dates.death }, target, people, bounds);
+        if (nm) setNotice(`So close — only ${nm.left} years left in ${yearLabel(Math.round(target[0]))}–${yearLabel(Math.round(target[1]))}!`);
+      }
+    }
+    // gap-chain lab: advance to the next-largest gap when the active one is bridged
+    if (labs.gapChain && challengeRange && !won) {
+      const rangeHadGaps = computeCoverage(people, bounds, challengeRange).gaps.length > 0;
+      const gapsAfter = computeCoverage(withNew, bounds).gaps;
+      const rangeDone = computeCoverage(withNew, bounds, challengeRange).gaps.length === 0;
+      if (rangeHadGaps && rangeDone && gapsAfter.length > 0) {
+        const ng = nextLargestGap(gapsAfter, challengeRange);
+        if (ng && ng[1] - ng[0] >= 10) {
+          setChain(c => c + 1);
+          setChallengeRange(ng);
+          setCustomStart(String(Math.round(ng[0])));
+          setCustomEnd(String(Math.round(ng[1])));
+        }
+      }
+    }
+    // records lab: persist fewest-people bests per challenge / gap range
+    if (labs.records && challenge) {
+      const wonAfter = computeCoverage(withNew, bounds).gaps.length === 0 && withNew.length > 1 && !wonDismissed;
+      let recs = records;
+      let changed = false;
+      if (wonAfter && !won) {
+        const r = recordResult(recs, challenge.key, withNew.length);
+        recs = r.records; changed = true;
+        if (r.isRecord) setNotice(`🏅 New record (${challenge.name}): ${withNew.length} people!`);
+      }
+      if (challengeRange) {
+        const rangeHadGaps = computeCoverage(people, bounds, challengeRange).gaps.length > 0;
+        const rangeDone = computeCoverage(withNew, bounds, challengeRange).gaps.length === 0;
+        if (rangeHadGaps && rangeDone) {
+          const rk = `${challenge.key}|${Math.round(challengeRange[0])}-${Math.round(challengeRange[1])}`;
+          const cnt = withNew.filter(p => p.death > challengeRange[0] && p.birth < challengeRange[1]).length;
+          const r = recordResult(recs, rk, cnt);
+          recs = r.records;
+          if (r.isRecord) changed = true;
+        }
+      }
+      if (changed) setRecords(recs);
+    }
     setInputVal(""); inputRef.current?.focus();
-  }, [people, challenge, challengeRange, bounds]);
+  }, [people, challenge, challengeRange, bounds, labs, opts, largestGap, won, wonDismissed, records]);
 
   const handleKeyDown = (e) => {
     if (e.key === "Enter" && suggestions.length > 0) handleSelect(suggestions[0]);
@@ -207,6 +382,11 @@ export default function App() {
 
   const removePerson = (id) => {
     if (isChallengePerson(id)) return;
+    if (labs.undo) {
+      undoRef.current.push({ people, challengeRange });
+      if (undoRef.current.length > 50) undoRef.current.shift();
+      setUndoDepth(d => d + 1);
+    }
     setPeople(prev => prev.filter(p => p.id !== id));
   };
 
@@ -305,6 +485,7 @@ export default function App() {
         onLoadFile={loadFile}
         loadError={loadError}
         busy={starting || loadingFile}
+        records={records}
       />
     );
   }
@@ -333,6 +514,9 @@ export default function App() {
               <button style={btnStyle({ opacity: loadingFile ? 0.6 : 1 })} onClick={() => fileInputRef.current?.click()} disabled={loadingFile} title="Load progress from file">
                 {loadingFile ? "⏳ Loading…" : "📂 Load"}
               </button>
+              {labs.shareLink && <button style={btnStyle()} onClick={handleShare} title="Copy a link that loads this exact game">🔗 Share</button>}
+              {labs.undo && <button style={btnStyle({ opacity: undoDepth ? 1 : 0.4 })} onClick={doUndo} title="Undo last add/remove (Ctrl+Z)">↩</button>}
+              <button style={btnStyle()} onClick={() => setShowLabs(true)} title="Toggle experiments (labs)">🧪 Labs{activeLabIds.length > 0 ? ` ${activeLabIds.length}` : ""}</button>
               <button style={btnStyle()} onClick={() => setDark(d => !d)}>{dark ? "☀️" : "🌙"}</button>
               <input ref={fileInputRef} type="file" accept=".json" style={{ display: "none" }}
                 onChange={e => { const f = e.target.files?.[0]; if (f) { e.target.value = ""; loadFile(f); } }} />
@@ -357,6 +541,17 @@ export default function App() {
                   >
                     <span style={{ fontWeight: 600, fontSize: 14, color: T.text }}>{s.label}</span>
                     {s.desc && <span style={{ color: T.muted, fontSize: 12, marginLeft: 8 }}>{s.desc.slice(0, 70)}{s.desc.length > 70 ? "…" : ""}</span>}
+                    {labs.deltaPreview && sugDates[s.id] && (() => {
+                      const cand = { id: s.id, birth: sugDates[s.id].birth, death: sugDates[s.id].death };
+                      const d = Math.round(computeCoverage([...people, cand], bounds).total - computeCoverage(people, bounds).total);
+                      const completes = challengeRange && rangeStats && rangeStats.gaps.length > 0 &&
+                        computeCoverage([...people, cand], bounds, challengeRange).gaps.length === 0;
+                      return (
+                        <span style={{ marginLeft: 8, fontSize: 11, fontWeight: 700, color: d > 0 ? "#5bb86a" : T.faint, flexShrink: 0 }}>
+                          {d > 0 ? `+${d} y` : "no gain"}{completes ? " · ✓ completes 🎯" : ""}
+                        </span>
+                      );
+                    })()}
                   </div>
                 ))}
               </div>
@@ -364,11 +559,13 @@ export default function App() {
           </div>
           {error && <div style={{ color: "#e07b54", fontSize: 12, marginBottom: 4 }}>{error}</div>}
           {loadError && <div style={{ color: "#e07b54", fontSize: 12, marginBottom: 4 }}>{loadError}</div>}
+          {notice && <div style={{ color: "#5bb86a", fontSize: 12, marginBottom: 4 }}>{notice}</div>}
 
           {/* Timeline */}
           <Timeline
             people={people} view={view} setView={setView} bounds={bounds} gaps={gaps}
-            range={challengeRange} onGapClick={startGapChallenge}
+            range={challengeRange} onGapClick={labs.mysteryGaps ? () => {} : startGapChallenge}
+            hideGaps={labs.mysteryGaps}
             wikiTitles={wikiTitles} onSelectPerson={setSelectedPerson} T={T}
           />
 
@@ -389,15 +586,45 @@ export default function App() {
               <div style={{ height: "100%", width: `${coverPct}%`, background: fullyCovered ? "#5bb86a" : "#4f86c6", borderRadius: 3, transition: "width 0.4s" }} />
             </div>
             <span style={{ fontSize: 12, color: fullyCovered ? "#5bb86a" : T.muted, minWidth: 44 }}>{coverPct}%</span>
-            {gaps.length > 0 && !fullyCovered && (() => {
-              const g = [...gaps].sort((a, b) => (b[1] - b[0]) - (a[1] - a[0]))[0];
-              return (
-                <button onClick={() => startGapChallenge(g[0], g[1])} style={{ ...btnStyle({ padding: "2px 8px" }), fontSize: 10 }} title="Start a gap challenge on the largest gap">
-                  🎯 largest gap: {yearLabel(Math.round(g[0]))}–{yearLabel(Math.round(g[1]))}
-                </button>
-              );
-            })()}
+            {par && <span style={{ fontSize: 10, color: T.faint, border: `1px solid ${T.border2}`, borderRadius: 8, padding: "1px 6px" }} title="Approximate minimum people for this challenge (labs)">par {par}</span>}
+            {labs.budget && opts.budget > 0 && <span style={{ fontSize: 10, color: T.muted, border: `1px solid ${T.border2}`, borderRadius: 8, padding: "1px 6px" }} title="Budget cap (labs)">{people.length}/{opts.budget} 👥</span>}
+            {labs.gapChain && chain > 0 && <span style={{ fontSize: 10, fontWeight: 700, color: T.accent, border: `1px solid ${T.accentBorder}`, borderRadius: 8, padding: "1px 6px" }} title="Consecutive gaps bridged (labs)">⛓ chain ×{chain}</span>}
+            {gaps.length > 0 && !fullyCovered && !labs.mysteryGaps && largestGap && (
+              <button onClick={() => startGapChallenge(largestGap[0], largestGap[1])} style={{ ...btnStyle({ padding: "2px 8px" }), fontSize: 10 }} title="Start a gap challenge on the largest gap">
+                🎯 largest gap: {yearLabel(Math.round(largestGap[0]))}–{yearLabel(Math.round(largestGap[1]))}
+              </button>
+            )}
+            {labs.mysteryGaps && gaps.length > 0 && !fullyCovered && (
+              <span style={{ fontSize: 10, color: T.gapDash }} title="Gap regions hidden by the mystery-gaps lab">❓ {gaps.length} {gaps.length === 1 ? "gap" : "gaps"}</span>
+            )}
           </div>
+
+          {/* 💡 bridger suggestions (labs) */}
+          {labs.bridgers && targetGap && !fullyCovered && (
+            <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", margin: "6px 0 8px" }}>
+              <button onClick={loadBridgers} disabled={bridgersLoading} style={btnStyle({ padding: "2px 8px", fontSize: 10 })}>
+                {bridgersLoading ? "💡 searching…" : `💡 who lived in ${yearLabel(Math.round(targetGap[0]))}–${yearLabel(Math.round(targetGap[1]))}?`}
+              </button>
+              {bridgers.map(b => (
+                <button key={b.id} onClick={() => { setBridgers([]); handleSelect({ id: b.id, label: b.label, desc: "" }); }}
+                  style={{ padding: "2px 8px", fontSize: 10, background: T.surface2, color: T.text, border: `1px solid ${T.border2}`, borderRadius: 12, cursor: "pointer" }}
+                  title={`${yearLabel(b.birth)}–${yearLabel(b.death)} — click to add`}>
+                  {b.label}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/* active lab chips */}
+          {activeLabIds.length > 0 && (
+            <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginBottom: 6 }}>
+              {activeLabIds.map(id => (
+                <span key={id} style={{ fontSize: 9, padding: "1px 7px", borderRadius: 8, background: T.accentBg, color: T.accent, border: `1px solid ${T.accentBorder}` }}>
+                  🧪 {LAB_DEFS.find(d => d.id === id)?.name}
+                </span>
+              ))}
+            </div>
+          )}
         </div>
       </div>
 
@@ -442,6 +669,13 @@ export default function App() {
                 {people.length > 6 && people.length <= 12 && " Great job!"}
                 {people.length > 12 && " Can you do it with fewer?"}
               </div>
+              {(par || (labs.records && records[challenge.key] !== undefined) || (labs.budget && opts.budget > 0)) && (
+                <div style={{ fontSize: 12, marginTop: 4, color: T.muted }}>
+                  {par && <span style={{ marginRight: 10 }}>{medalFor(people.length, par)} par {par} · you: {people.length}</span>}
+                  {labs.records && records[challenge.key] !== undefined && <span style={{ marginRight: 10 }}>🏅 your best: {records[challenge.key]}</span>}
+                  {labs.budget && opts.budget > 0 && <span>{people.length <= opts.budget ? "🏆 within budget" : "over budget"} ({opts.budget})</span>}
+                </div>
+              )}
               <button onClick={() => setWonDismissed(true)} style={{ marginTop: 10, padding: "7px 18px", background: "#5bb86a", border: "none", borderRadius: 6, color: "#0f1117", fontWeight: 700, cursor: "pointer", fontSize: 13 }}>Keep playing</button>
               <button onClick={backToMenu} style={{ marginTop: 10, marginLeft: 6, padding: "7px 18px", background: "transparent", border: `1px solid ${T.winBorder}`, borderRadius: 6, color: T.text, cursor: "pointer", fontSize: 13 }}>New challenge</button>
             </div>
@@ -471,6 +705,11 @@ export default function App() {
               >
                 <span style={{ color: p.color, fontWeight: 700, minWidth: 130 }}>{p.label}</span>
                 <span style={{ color: T.faint, fontSize: 11, minWidth: 140 }}>{yearLabel(p.birth)} – {yearLabel(p.death)}</span>
+                {marginal[p.id] > 0 && (
+                  <span title={`Years only ${p.label} covers — removing them opens that gap`} style={{ fontSize: 10, color: T.accent, background: T.accentBg, borderRadius: 8, padding: "1px 6px", flexShrink: 0 }}>
+                    ⛓ holds {marginal[p.id]}y
+                  </span>
+                )}
                 {p.desc && <span style={{ color: T.muted, fontSize: 12, flex: 1 }}>{p.desc.slice(0, 90)}{p.desc.length > 90 ? "…" : ""}</span>}
                 {wikiTitles[p.id] && (
                   <a href={wikiUrl(wikiTitles[p.id])} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()}
@@ -500,7 +739,11 @@ export default function App() {
       </div>
 
       {selectedPerson && (
-        <PersonCard person={selectedPerson} allPeople={people} onClose={() => setSelectedPerson(null)} onSelectPerson={p => setSelectedPerson(p)} T={T} />
+        <PersonCard person={selectedPerson} allPeople={people} onClose={() => setSelectedPerson(null)} onSelectPerson={p => setSelectedPerson(p)} marginal={marginal[selectedPerson.id] ?? null} T={T} />
+      )}
+
+      {showLabs && (
+        <LabsPanel T={T} labs={labs} opts={opts} onToggle={toggleLab} onOpt={setOpt} onPlayset={applyPlayset} onClose={() => setShowLabs(false)} />
       )}
     </div>
   );

@@ -54,7 +54,7 @@ function PersonChip({ info, T, role }) {
   );
 }
 
-function PresetCard({ preset, T, onPick, busy }) {
+function PresetCard({ preset, T, onPick, busy, records }) {
   const anchor = usePersonInfo(preset.anchorId);
   const end = usePersonInfo(preset.endId || null);
   return (
@@ -71,6 +71,9 @@ function PresetCard({ preset, T, onPick, busy }) {
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
         <div>
           <div style={{ fontSize: 15, fontWeight: 800, color: T.text }}>{preset.name}</div>
+          {records?.[preset.key] !== undefined && (
+            <div style={{ fontSize: 10, color: "#d4a843", marginTop: 2 }}>🏅 your best: {records[preset.key]} people</div>
+          )}
           {preset.mode && (
             <div style={{ display: "inline-block", marginTop: 4, padding: "2px 8px", fontSize: 11, fontWeight: 700,
               background: T.accentBg, color: T.accent, border: `1px solid ${T.accentBorder}`, borderRadius: 12 }}>
@@ -192,7 +195,7 @@ function CustomForm({ T, onStart, busy }) {
   );
 }
 
-export default function StartScreen({ T, dark, setDark, onStart, onLoadFile, loadError, busy }) {
+export default function StartScreen({ T, dark, setDark, onStart, onLoadFile, loadError, busy, records }) {
   return (
     <div style={{ minHeight: "100vh", background: T.bg, color: T.text, fontFamily: "system-ui,sans-serif" }}>
       <div style={{ maxWidth: 860, margin: "0 auto", padding: "40px 20px 60px" }}>
@@ -216,7 +219,7 @@ export default function StartScreen({ T, dark, setDark, onStart, onLoadFile, loa
         <CustomForm T={T} onStart={onStart} busy={busy} />
 
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(380px, 1fr))", gap: 14 }}>
-          {PRESETS.map(p => <PresetCard key={p.key} preset={p} T={T} onPick={onStart} busy={busy} />)}
+          {PRESETS.map(p => <PresetCard key={p.key} preset={p} T={T} onPick={onStart} busy={busy} records={records} />)}
         </div>
 
         <div style={{ marginTop: 28, fontSize: 10, color: T.faint2 }}>
