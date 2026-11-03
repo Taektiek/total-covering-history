@@ -66,20 +66,22 @@ export function computeCoverage(people, bounds, range = null) {
 
 // ------------------------------------------------------------- challenges
 
-// SPARQL ASK patterns checking whether a person belongs to a category.
+// SPARQL patterns checking whether a person belongs to a category. `pattern`
+// is the triple pattern (with `wd:Q…` / `wdt:P…`), reused both for the
+// per-person ASK check and inside SELECT queries (with `?item`).
 export const CATEGORIES = {
   women:      { label: "♀ Women",      description: "only people recorded as female on Wikidata",
-                ask: qid => `ASK { wd:${qid} wdt:P21 wd:Q6581072 }` },
+                pattern: "wdt:P21 wd:Q6581072" },
   scientists: { label: "🔬 Scientists", description: "only people whose occupation is a kind of scientist",
-                ask: qid => `ASK { wd:${qid} wdt:P106/wdt:P279* wd:Q901 }` },
+                pattern: "wdt:P106/wdt:P279* wd:Q901" },
   philosophers:{ label: "🤔 Philosophers", description: "only people whose occupation is a kind of philosopher",
-                ask: qid => `ASK { wd:${qid} wdt:P106/wdt:P279* wd:Q4964182 }` },
+                pattern: "wdt:P106/wdt:P279* wd:Q4964182" },
   artists:    { label: "🎨 Artists",    description: "only people whose occupation is a kind of artist",
-                ask: qid => `ASK { wd:${qid} wdt:P106/wdt:P279* wd:Q483501 }` },
+                pattern: "wdt:P106/wdt:P279* wd:Q483501" },
   writers:    { label: "✍️ Writers",    description: "only people whose occupation is a kind of writer",
-                ask: qid => `ASK { wd:${qid} wdt:P106/wdt:P279* wd:Q36180 }` },
+                pattern: "wdt:P106/wdt:P279* wd:Q36180" },
   rulers:     { label: "👑 Rulers",     description: "only people whose occupation is a kind of monarch",
-                ask: qid => `ASK { wd:${qid} wdt:P106/wdt:P279* wd:Q116 }` },
+                pattern: "wdt:P106/wdt:P279* wd:Q116" },
 };
 
 // Pre-configured challenges. The anchor person's birth is the timeline start;
@@ -119,6 +121,30 @@ export async function searchPeople(query) {
   } catch { return []; }
 }
 
+// Extract a year from a Wikidata time value ("+1969-…" → 1969, "-0470-…" → -470).
+function extractYear(claims, prop) {
+  for (const v of (claims[prop]||[])) {
+    const tv = v.mainsnak?.datavalue?.value?.time;
+    if (tv) { const m = tv.match(/^[+-]?(\d+)-/); if (m) { let y=parseInt(m[1],10); if(tv.startsWith("-"))y=-y; return y; } }
+  }
+  return null;
+}
+
+function entityToPerson(qid, entity, requireHuman) {
+  if (!entity) return null;
+  const label = entity.labels?.en?.value || qid;
+  const claims = entity.claims || {};
+  if (requireHuman) {
+    const isHuman = (claims["P31"]||[]).some(v=>v.mainsnak?.datavalue?.value?.id==="Q5");
+    if (!isHuman) return null;
+  }
+  const birth = extractYear(claims, "P569");
+  let death = extractYear(claims, "P570");
+  if (birth===null) return null;
+  if (death===null) death = PRESENT;
+  return { label, birth, death };
+}
+
 // Birth/death years for a Wikidata entity. requireHuman=false also accepts
 // semi-legendary figures (Homer) that Wikidata does not class as humans —
 // used only for pre-configured challenge anchors.
@@ -127,27 +153,56 @@ export async function fetchPersonDates(qid, requireHuman = true) {
   try {
     const res = await fetch(url);
     const data = await res.json();
-    const entity = data.entities?.[qid];
-    if (!entity) return null;
-    const label = entity.labels?.en?.value || qid;
-    const claims = entity.claims || {};
-    function extractYear(prop) {
-      for (const v of (claims[prop]||[])) {
-        const tv = v.mainsnak?.datavalue?.value?.time;
-        if (tv) { const m = tv.match(/^[+-]?(\d+)-/); if (m) { let y=parseInt(m[1],10); if(tv.startsWith("-"))y=-y; return y; } }
-      }
-      return null;
-    }
-    if (requireHuman) {
-      const isHuman = (claims["P31"]||[]).some(v=>v.mainsnak?.datavalue?.value?.id==="Q5");
-      if (!isHuman) return null;
-    }
-    const birth = extractYear("P569");
-    let death = extractYear("P570");
-    if (birth===null) return null;
-    if (death===null) death = PRESENT;
-    return { label, birth, death };
+    return entityToPerson(qid, data.entities?.[qid], requireHuman);
   } catch { return null; }
+}
+
+// Batched birth/death years for many QIDs (one API call per 50 ids) — used by
+// the Δ-coverage preview lab to annotate search suggestions. Returns
+// { qid: { label, birth, death } } for the entities that resolved.
+export async function fetchPeopleDates(ids, requireHuman = true) {
+  const out = {};
+  for (let j = 0; j < ids.length; j += 50) {
+    const batch = ids.slice(j, j + 50).join("|");
+    const url = `${WD_API}?action=wbgetentities&ids=${batch}&props=claims|labels&languages=en&format=json&origin=*`;
+    try {
+      const res = await fetch(url);
+      const data = await res.json();
+      for (const [qid, entity] of Object.entries(data.entities || {})) {
+        const p = entityToPerson(qid, entity, requireHuman);
+        if (p) out[qid] = p;
+      }
+    } catch { /* best-effort */ }
+  }
+  return out;
+}
+
+// Notable people whose lifespan overlaps [s, e] — powers the 💡 bridger
+// suggestion lab. If a category mode is active, candidates are restricted to
+// it. Best-effort: returns [] on any failure.
+export async function suggestBridgers(s, e, mode = null, limit = 6) {
+  const cat = mode && CATEGORIES[mode] ? `?item ${CATEGORIES[mode].pattern}.` : "";
+  const query = `
+    SELECT ?item ?itemLabel ?b ?d ?sitelinks WHERE {
+      ?item wdt:P31 wd:Q5; wdt:P569 ?birth; wdt:P570 ?death; wikibase:sitelinks ?sitelinks.
+      ${cat}
+      FILTER(YEAR(?birth) <= ${Math.floor(e)} && YEAR(?death) >= ${Math.ceil(s)} && ?sitelinks >= 8)
+      BIND(YEAR(?birth) AS ?b)
+      BIND(YEAR(?death) AS ?d)
+      SERVICE wikibase:label { bd:serviceParam wikibase:language "en". }
+    }
+    ORDER BY DESC(?sitelinks)
+    LIMIT ${Math.max(1, limit)}`;
+  try {
+    const res = await fetch(`https://query.wikidata.org/sparql?format=json&origin=*&query=${encodeURIComponent(query)}`);
+    const data = await res.json();
+    return (data.results?.bindings || []).map(b => ({
+      id: b.item.value.split("/").pop(),
+      label: b.itemLabel?.value || b.item.value,
+      birth: Number(b.b.value),
+      death: Number(b.d.value),
+    }));
+  } catch { return []; }
 }
 
 export async function fetchDescription(qid) {
@@ -205,7 +260,7 @@ const categoryCache = new Map();
 export async function checkCategory(qid, mode) {
   const key = `${qid}|${mode}`;
   if (categoryCache.has(key)) return categoryCache.get(key);
-  const query = CATEGORIES[mode].ask(qid);
+  const query = `ASK { wd:${qid} ${CATEGORIES[mode].pattern} }`;
   try {
     const res = await fetch(`https://query.wikidata.org/sparql?format=json&origin=*&query=${encodeURIComponent(query)}`);
     const data = await res.json();
