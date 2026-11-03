@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react";
 import { yearLabel, fetchPersonDetails, wikiUrl } from "./lib";
 
-export default function PersonCard({ person, allPeople, onClose, onSelectPerson, marginal = null, T }) {
+export default function PersonCard({ person, allPeople, onClose, onSelectPerson, marginal = null, mobile = false, T }) {
   const [details, setDetails] = useState(null);
   const overlaps = allPeople.filter(p => p.id !== person.id && p.birth < person.death && p.death > person.birth);
   useEffect(() => { fetchPersonDetails(person.id).then(setDetails); }, [person.id]);
@@ -14,8 +14,8 @@ export default function PersonCard({ person, allPeople, onClose, onSelectPerson,
   };
 
   return (
-    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: T.overlay, zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
-      <div onClick={e => e.stopPropagation()} style={{ background: T.card, border: `1px solid ${T.cardBorder}`, borderRadius: 16, width: "100%", maxWidth: 560, maxHeight: "85vh", overflow: "auto", boxShadow: "0 24px 64px rgba(0,0,0,0.5)", position: "relative" }}>
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: T.overlay, zIndex: 1000, display: "flex", alignItems: mobile ? "flex-end" : "center", justifyContent: "center", padding: mobile ? 0 : 20 }}>
+      <div onClick={e => e.stopPropagation()} style={{ background: T.card, border: `1px solid ${T.cardBorder}`, borderRadius: mobile ? "16px 16px 0 0" : 16, width: "100%", maxWidth: 560, maxHeight: mobile ? "82dvh" : "85vh", overflow: "auto", boxShadow: "0 24px 64px rgba(0,0,0,0.5)", position: "relative" }}>
         <div style={{ background: person.color, borderRadius: "16px 16px 0 0", padding: "18px 22px 14px", position: "relative" }}>
           <button onClick={onClose} style={{ position: "absolute", top: 12, right: 14, background: "rgba(0,0,0,0.2)", border: "none", borderRadius: 20, color: "#fff", fontSize: 18, width: 30, height: 30, cursor: "pointer", lineHeight: "30px", textAlign: "center", padding: 0 }}>×</button>
           <div style={{ display: "flex", gap: 16, alignItems: "flex-start" }}>

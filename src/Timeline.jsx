@@ -1,16 +1,19 @@
 // Timeline canvas: pan by dragging, shift-drag to zoom into a region,
 // zoom-aware date/name labels on the bars, clickable gaps.
 import { useRef, useState, useEffect } from "react";
-import { assignRows, yearLabel, compactYear } from "./lib";
+import { assignRows, yearLabel, compactYear, MIN_SPAN } from "./lib";
 
 const BAR_H = 10, TALL_BAR_H = 16, ROW_GAP = 4, TOP_PAD = 4;
 const MAX_TL_HEIGHT = 220;
+const MAX_TL_HEIGHT_MOBILE = 150;
 const DATES_PX = 70;   // bar pixel width at which dates appear on the bar
 const NAME_PX = 150;   // bar pixel width at which the name appears too
 
-export default function Timeline({ people, view, setView, bounds, gaps, range, onGapClick, hideGaps = false, wikiTitles, onHover, onSelectPerson, T }) {
+export default function Timeline({ people, view, setView, bounds, gaps, range, onGapClick, hideGaps = false, mobile = false, wikiTitles, onHover, onSelectPerson, T }) {
   const tlRef = useRef(null);
   const dragRef = useRef(null);
+  const justDraggedRef = useRef(false); // was the last pointer interaction a drag?
+  const pointersRef = useRef(new Map()); // pointerId -> {x, y} for pinch zoom
   const [width, setWidth] = useState(900);
   const [dragSel, setDragSel] = useState(null); // {lo, hi} in percent
   const [hoverGap, setHoverGap] = useState(null); // index of the hovered gap
@@ -28,9 +31,10 @@ export default function Timeline({ people, view, setView, bounds, gaps, range, o
   const pxPerYear = width / viewSpan;
   const { rowMap, numRows } = assignRows(people);
   const tall = people.some(p => (p.death - p.birth) * pxPerYear >= DATES_PX);
-  const barH = tall ? TALL_BAR_H : BAR_H;
-  const contentH = TOP_PAD + numRows * (barH + ROW_GAP) + 22;
-  const tlHeight = Math.min(contentH, MAX_TL_HEIGHT);
+  const barH = (tall || mobile) ? TALL_BAR_H : BAR_H; // taller bars = easier touch targets
+  const rowGap = mobile ? 6 : ROW_GAP;
+  const contentH = TOP_PAD + numRows * (barH + rowGap) + 22;
+  const tlHeight = Math.min(contentH, mobile ? MAX_TL_HEIGHT_MOBILE : MAX_TL_HEIGHT);
 
   const pctInView = (y) => ((y - view[0]) / viewSpan) * 100;
 
@@ -41,10 +45,25 @@ export default function Timeline({ people, view, setView, bounds, gaps, range, o
   };
 
   const onPointerDown = (e) => {
-    if (e.button !== 0) return;
+    if (e.button !== 0 && e.pointerType === "mouse") return;
     e.preventDefault();
+    justDraggedRef.current = false;
     const target = e.currentTarget;
     target.setPointerCapture(e.pointerId);
+    pointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    // two fingers down -> pinch-to-zoom instead of pan
+    if (pointersRef.current.size === 2) {
+      const [a, b] = [...pointersRef.current.values()];
+      dragRef.current = {
+        mode: "pinch",
+        startDist: Math.max(20, Math.hypot(a.x - b.x, a.y - b.y)),
+        startSpan: viewSpan,
+        midYear: (view[0] + view[1]) / 2,
+        moved: true,
+      };
+      setDragSel(null);
+      return;
+    }
     const mode = e.shiftKey ? "select" : "pan";
     dragRef.current = {
       mode,
@@ -59,8 +78,19 @@ export default function Timeline({ people, view, setView, bounds, gaps, range, o
   };
 
   const onPointerMove = (e) => {
+    pointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
     const d = dragRef.current;
     if (!d) return;
+    if (d.mode === "pinch") {
+      const pts = [...pointersRef.current.values()];
+      if (pts.length < 2) return;
+      const dist = Math.max(20, Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y));
+      const span = Math.max(MIN_SPAN, Math.min(bounds[1] - bounds[0], d.startSpan * (d.startDist / dist)));
+      let s = d.midYear - span / 2;
+      s = Math.max(bounds[0], Math.min(s, bounds[1] - span));
+      setView([s, s + span]);
+      return;
+    }
     const dx = e.clientX - d.startX;
     if (Math.abs(dx) > 3 || Math.abs(e.clientY - d.startY) > 3) d.moved = true;
     if (d.mode === "pan") {
@@ -77,11 +107,14 @@ export default function Timeline({ people, view, setView, bounds, gaps, range, o
   };
 
   const endDrag = (e) => {
+    if (e) pointersRef.current.delete(e.pointerId);
     const d = dragRef.current;
     if (!d) return;
     dragRef.current = null;
+    justDraggedRef.current = d.moved;
     if (e) e.currentTarget.releasePointerCapture?.(e.pointerId);
     setDragSel(null);
+    if (d.mode === "pinch") return; // pinch ends; remaining finger does not resume pan
     if (d.mode === "select") {
       const lo = Math.min(d.startPct, getPct(e.clientX));
       const hi = Math.max(d.startPct, getPct(e.clientX));
@@ -90,12 +123,16 @@ export default function Timeline({ people, view, setView, bounds, gaps, range, o
         const ne = view[0] + hi / 100 * viewSpan;
         if (ne - ns >= 10) setView([ns, ne]);
       }
-      return;
     }
-    // A press without movement is a click. setPointerCapture on pointerdown
-    // retargets the browser's click event to this container, so the children's
-    // onClick never fires — hit-test manually here instead.
-    if (d.moved || !e) return;
+  };
+
+  // setPointerCapture on pointerdown retargets the browser's click to this
+  // container, so the children's onClick never fires. Handle the click here on
+  // the container instead, and hit-test manually. (Doing this on pointerup
+  // instead breaks touch: the synthesized click lands on a modal that the
+  // pointerup already opened.)
+  const onContainerClick = (e) => {
+    if (justDraggedRef.current) return;
     const el = document.elementFromPoint(e.clientX, e.clientY);
     const gapEl = el?.closest?.("[data-gap-idx]");
     if (gapEl) {
@@ -137,6 +174,7 @@ export default function Timeline({ people, view, setView, bounds, gaps, range, o
         onPointerMove={onPointerMove}
         onPointerUp={endDrag}
         onPointerCancel={endDrag}
+        onClick={onContainerClick}
       >
         {/* challenge-range highlight */}
         {range && rangeR > rangeL && (
@@ -180,7 +218,7 @@ export default function Timeline({ people, view, setView, bounds, gaps, range, o
               onPointerEnter={() => onHover?.(p)}
               onPointerLeave={() => onHover?.(null)}
               title={`${p.label}: ${yearLabel(p.birth)}–${yearLabel(p.death)}${wikiTitles[p.id] ? ` — ${wikiTitles[p.id]}` : ""}`}
-              style={{ position: "absolute", top: TOP_PAD + row * (barH + ROW_GAP), height: barH,
+              style={{ position: "absolute", top: TOP_PAD + row * (barH + rowGap), height: barH,
                 left: `${l}%`, width: `${Math.max(r - l, 0.15)}%`,
                 background: p.color, borderRadius: 3, opacity: 0.88, cursor: "pointer", zIndex: 2,
                 display: "flex", alignItems: "center", overflow: "hidden" }}>
@@ -214,7 +252,7 @@ export default function Timeline({ people, view, setView, bounds, gaps, range, o
       </div>
       <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: T.faint, marginTop: 5, padding: "0 2px" }}>
         <span>{yearLabel(Math.round(view[0]))}</span>
-        <span style={{ color: T.muted }}>drag to pan · shift+drag to zoom{!hideGaps ? " · click a red gap to challenge it" : ""}</span>
+        <span style={{ color: T.muted }}>{mobile ? "drag to pan · pinch to zoom" : "drag to pan · shift+drag to zoom"}{!hideGaps ? " · tap a red gap to challenge it" : ""}</span>
         <span>{yearLabel(Math.round(view[1]))}</span>
       </div>
     </div>

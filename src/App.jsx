@@ -13,11 +13,14 @@ import Timeline from "./Timeline";
 import PersonCard from "./PersonCard";
 import StartScreen from "./StartScreen";
 import LabsPanel from "./LabsPanel";
+import { useIsMobile } from "./useIsMobile";
 
 export default function App() {
   const [screen, setScreen] = useState("start"); // "start" | "game"
   const [dark, setDark] = useState(false);
   const T = dark ? DARK : LIGHT;
+  const mobile = useIsMobile();
+  const [menuOpen, setMenuOpen] = useState(false); // mobile ☰ menu
 
   // the active challenge: { key, name, desc, mode, anchorId, endId, endYear, custom, anchor, end, bounds }
   const [challenge, setChallenge] = useState(null);
@@ -480,7 +483,7 @@ export default function App() {
   if (screen === "start" || !challenge) {
     return (
       <StartScreen
-        T={T} dark={dark} setDark={setDark}
+        T={T} dark={dark} setDark={setDark} mobile={mobile}
         onStart={(def) => startChallenge(def)}
         onLoadFile={loadFile}
         loadError={loadError}
@@ -492,13 +495,13 @@ export default function App() {
 
   // ------------------------------------------------------------ game screen
   return (
-    <div style={{ fontFamily: "system-ui,sans-serif", background: T.bg, minHeight: "100vh", color: T.text, display: "flex", flexDirection: "column" }}>
+    <div style={{ fontFamily: "system-ui,sans-serif", background: T.bg, minHeight: "100dvh", color: T.text, display: "flex", flexDirection: "column", touchAction: "manipulation" }}>
       {/* Sticky top */}
-      <div style={{ position: "sticky", top: 0, zIndex: 50, background: T.bg, borderBottom: `1px solid ${T.border}`, padding: "14px 20px 10px" }}>
+      <div style={{ position: "sticky", top: 0, zIndex: 50, background: T.bg, borderBottom: `1px solid ${T.border}`, padding: mobile ? "10px 12px 8px" : "14px 20px 10px" }}>
         <div style={{ maxWidth: 920, margin: "0 auto" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8, gap: 10 }}>
             <div style={{ minWidth: 0 }}>
-              <h1 style={{ fontSize: 17, fontWeight: 700, margin: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+              <h1 style={{ fontSize: mobile ? 15 : 17, fontWeight: 700, margin: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                 🕰️ {challenge.name}
               </h1>
               <div style={{ fontSize: 11, color: T.muted, marginTop: 2 }}>
@@ -506,22 +509,44 @@ export default function App() {
                 {challenge.mode && <> · <strong style={{ color: T.accent }}>{CATEGORIES[challenge.mode].label}</strong> only</>}
               </div>
             </div>
-            <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", justifyContent: "flex-end" }}>
-              <button style={btnStyle()} onClick={backToMenu} title="Back to challenge selection">⏏ Menu</button>
+            {mobile ? (
+              <div style={{ display: "flex", gap: 6, alignItems: "center", flexShrink: 0 }}>
+                <button style={btnStyle()} onClick={() => setMenuOpen(o => !o)} title="More actions" aria-label="More actions">☰</button>
+                <button style={btnStyle()} onClick={() => setDark(d => !d)}>{dark ? "☀️" : "🌙"}</button>
+              </div>
+            ) : (
+              <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", justifyContent: "flex-end" }}>
+                <button style={btnStyle()} onClick={backToMenu} title="Back to challenge selection">⏏ Menu</button>
+                {(view[0] !== bounds[0] || view[1] !== bounds[1]) &&
+                  <button style={btnStyle()} onClick={() => setView([bounds[0], bounds[1]])}>↺ Reset zoom</button>}
+                <button style={btnStyle()} onClick={handleSave} title="Save progress to file">💾 Save</button>
+                <button style={btnStyle({ opacity: loadingFile ? 0.6 : 1 })} onClick={() => fileInputRef.current?.click()} disabled={loadingFile} title="Load progress from file">
+                  {loadingFile ? "⏳ Loading…" : "📂 Load"}
+                </button>
+                {labs.shareLink && <button style={btnStyle()} onClick={handleShare} title="Copy a link that loads this exact game">🔗 Share</button>}
+                {labs.undo && <button style={btnStyle({ opacity: undoDepth ? 1 : 0.4 })} onClick={doUndo} title="Undo last add/remove (Ctrl+Z)">↩</button>}
+                <button style={btnStyle()} onClick={() => setShowLabs(true)} title="Toggle experiments (labs)">🧪 Labs{activeLabIds.length > 0 ? ` ${activeLabIds.length}` : ""}</button>
+                <button style={btnStyle()} onClick={() => setDark(d => !d)}>{dark ? "☀️" : "🌙"}</button>
+              </div>
+            )}
+          </div>
+          {/* mobile ☰ menu: all actions in a wrapping row */}
+          {mobile && menuOpen && (
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 8 }}>
+              <button style={btnStyle()} onClick={() => { setMenuOpen(false); backToMenu(); }}>⏏ Menu</button>
               {(view[0] !== bounds[0] || view[1] !== bounds[1]) &&
-                <button style={btnStyle()} onClick={() => setView([bounds[0], bounds[1]])}>↺ Reset zoom</button>}
-              <button style={btnStyle()} onClick={handleSave} title="Save progress to file">💾 Save</button>
-              <button style={btnStyle({ opacity: loadingFile ? 0.6 : 1 })} onClick={() => fileInputRef.current?.click()} disabled={loadingFile} title="Load progress from file">
+                <button style={btnStyle()} onClick={() => { setMenuOpen(false); setView([bounds[0], bounds[1]]); }}>↺ Reset zoom</button>}
+              <button style={btnStyle()} onClick={handleSave}>💾 Save</button>
+              <button style={btnStyle({ opacity: loadingFile ? 0.6 : 1 })} onClick={() => fileInputRef.current?.click()} disabled={loadingFile}>
                 {loadingFile ? "⏳ Loading…" : "📂 Load"}
               </button>
-              {labs.shareLink && <button style={btnStyle()} onClick={handleShare} title="Copy a link that loads this exact game">🔗 Share</button>}
-              {labs.undo && <button style={btnStyle({ opacity: undoDepth ? 1 : 0.4 })} onClick={doUndo} title="Undo last add/remove (Ctrl+Z)">↩</button>}
-              <button style={btnStyle()} onClick={() => setShowLabs(true)} title="Toggle experiments (labs)">🧪 Labs{activeLabIds.length > 0 ? ` ${activeLabIds.length}` : ""}</button>
-              <button style={btnStyle()} onClick={() => setDark(d => !d)}>{dark ? "☀️" : "🌙"}</button>
-              <input ref={fileInputRef} type="file" accept=".json" style={{ display: "none" }}
-                onChange={e => { const f = e.target.files?.[0]; if (f) { e.target.value = ""; loadFile(f); } }} />
+              {labs.shareLink && <button style={btnStyle()} onClick={handleShare}>🔗 Share</button>}
+              {labs.undo && <button style={btnStyle({ opacity: undoDepth ? 1 : 0.4 })} onClick={doUndo}>↩ Undo</button>}
+              <button style={btnStyle()} onClick={() => { setMenuOpen(false); setShowLabs(true); }}>🧪 Labs{activeLabIds.length > 0 ? ` ${activeLabIds.length}` : ""}</button>
             </div>
-          </div>
+          )}
+          <input ref={fileInputRef} type="file" accept=".json" style={{ display: "none" }}
+            onChange={e => { const f = e.target.files?.[0]; if (f) { e.target.value = ""; loadFile(f); } }} />
 
           {/* Input */}
           <div style={{ position: "relative", marginBottom: 8 }}>
@@ -565,7 +590,7 @@ export default function App() {
           <Timeline
             people={people} view={view} setView={setView} bounds={bounds} gaps={gaps}
             range={challengeRange} onGapClick={labs.mysteryGaps ? () => {} : startGapChallenge}
-            hideGaps={labs.mysteryGaps}
+            hideGaps={labs.mysteryGaps} mobile={mobile}
             wikiTitles={wikiTitles} onSelectPerson={setSelectedPerson} T={T}
           />
 
@@ -629,7 +654,7 @@ export default function App() {
       </div>
 
       {/* Scrollable list */}
-      <div style={{ flex: 1, overflowY: "auto", padding: "14px 20px 24px" }}>
+      <div style={{ flex: 1, overflowY: "auto", padding: mobile ? "10px 12px 20px" : "14px 20px 24px" }}>
         <div style={{ maxWidth: 920, margin: "0 auto" }}>
 
           {/* gap challenge */}
@@ -676,8 +701,8 @@ export default function App() {
                   {labs.budget && opts.budget > 0 && <span>{people.length <= opts.budget ? "🏆 within budget" : "over budget"} ({opts.budget})</span>}
                 </div>
               )}
-              <button onClick={() => setWonDismissed(true)} style={{ marginTop: 10, padding: "7px 18px", background: "#5bb86a", border: "none", borderRadius: 6, color: "#0f1117", fontWeight: 700, cursor: "pointer", fontSize: 13 }}>Keep playing</button>
-              <button onClick={backToMenu} style={{ marginTop: 10, marginLeft: 6, padding: "7px 18px", background: "transparent", border: `1px solid ${T.winBorder}`, borderRadius: 6, color: T.text, cursor: "pointer", fontSize: 13 }}>New challenge</button>
+              <button onClick={() => setWonDismissed(true)} style={{ marginTop: 10, padding: "7px 18px", background: "#5bb86a", border: "none", borderRadius: 6, color: "#0f1117", fontWeight: 700, cursor: "pointer", fontSize: 13, ...(mobile ? { display: "block", width: "100%" } : {}) }}>Keep playing</button>
+              <button onClick={backToMenu} style={{ marginTop: 10, marginLeft: mobile ? 0 : 6, padding: "7px 18px", background: "transparent", border: `1px solid ${T.winBorder}`, borderRadius: 6, color: T.text, cursor: "pointer", fontSize: 13, ...(mobile ? { display: "block", width: "100%" } : {}) }}>New challenge</button>
             </div>
           )}
 
@@ -699,18 +724,18 @@ export default function App() {
           <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
             {sortedPeople.map(p => (
               <div key={p.id} onClick={() => setSelectedPerson(p)}
-                style={{ display: "flex", alignItems: "center", gap: 8, background: T.surface, border: `1px solid ${p.color}33`, borderLeft: `3px solid ${p.color}`, borderRadius: 6, padding: "6px 10px", fontSize: 13, cursor: "pointer", transition: "background 0.1s" }}
+                style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: mobile ? "wrap" : "nowrap", background: T.surface, border: `1px solid ${p.color}33`, borderLeft: `3px solid ${p.color}`, borderRadius: 6, padding: "6px 10px", fontSize: 13, cursor: "pointer", transition: "background 0.1s" }}
                 onMouseEnter={e => e.currentTarget.style.background = T.surface2}
                 onMouseLeave={e => e.currentTarget.style.background = T.surface}
               >
-                <span style={{ color: p.color, fontWeight: 700, minWidth: 130 }}>{p.label}</span>
-                <span style={{ color: T.faint, fontSize: 11, minWidth: 140 }}>{yearLabel(p.birth)} – {yearLabel(p.death)}</span>
+                <span style={{ color: p.color, fontWeight: 700, minWidth: mobile ? 0 : 130 }}>{p.label}</span>
+                <span style={{ color: T.faint, fontSize: 11, minWidth: mobile ? 0 : 140 }}>{yearLabel(p.birth)} – {yearLabel(p.death)}</span>
                 {marginal[p.id] > 0 && (
                   <span title={`Years only ${p.label} covers — removing them opens that gap`} style={{ fontSize: 10, color: T.accent, background: T.accentBg, borderRadius: 8, padding: "1px 6px", flexShrink: 0 }}>
                     ⛓ holds {marginal[p.id]}y
                   </span>
                 )}
-                {p.desc && <span style={{ color: T.muted, fontSize: 12, flex: 1 }}>{p.desc.slice(0, 90)}{p.desc.length > 90 ? "…" : ""}</span>}
+                {p.desc && <span style={{ color: T.muted, fontSize: 12, flex: 1, ...(mobile ? { flexBasis: "100%", order: 5 } : {}) }}>{p.desc.slice(0, 90)}{p.desc.length > 90 ? "…" : ""}</span>}
                 {wikiTitles[p.id] && (
                   <a href={wikiUrl(wikiTitles[p.id])} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()}
                     title={`Wikipedia article: ${wikiTitles[p.id]}`}
@@ -739,11 +764,11 @@ export default function App() {
       </div>
 
       {selectedPerson && (
-        <PersonCard person={selectedPerson} allPeople={people} onClose={() => setSelectedPerson(null)} onSelectPerson={p => setSelectedPerson(p)} marginal={marginal[selectedPerson.id] ?? null} T={T} />
+        <PersonCard person={selectedPerson} allPeople={people} onClose={() => setSelectedPerson(null)} onSelectPerson={p => setSelectedPerson(p)} marginal={marginal[selectedPerson.id] ?? null} mobile={mobile} T={T} />
       )}
 
       {showLabs && (
-        <LabsPanel T={T} labs={labs} opts={opts} onToggle={toggleLab} onOpt={setOpt} onPlayset={applyPlayset} onClose={() => setShowLabs(false)} />
+        <LabsPanel T={T} labs={labs} opts={opts} mobile={mobile} onToggle={toggleLab} onOpt={setOpt} onPlayset={applyPlayset} onClose={() => setShowLabs(false)} />
       )}
     </div>
   );

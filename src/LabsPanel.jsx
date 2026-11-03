@@ -2,7 +2,7 @@
 // core labs, and one-click playsets. Flags persist in localStorage.
 import { LAB_DEFS, PLAYSETS } from "./labs.js";
 
-export default function LabsPanel({ T, labs, opts, onToggle, onOpt, onPlayset, onClose }) {
+export default function LabsPanel({ T, labs, opts, mobile = false, onToggle, onOpt, onPlayset, onClose }) {
   const row = {
     display: "flex", alignItems: "center", justifyContent: "space-between",
     gap: 10, padding: "7px 0", borderBottom: `1px solid ${T.border}`,
@@ -20,8 +20,8 @@ export default function LabsPanel({ T, labs, opts, onToggle, onOpt, onPlayset, o
     </button>
   );
   return (
-    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: T.overlay, zIndex: 900, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
-      <div onClick={e => e.stopPropagation()} style={{ background: T.card, border: `1px solid ${T.cardBorder}`, borderRadius: 14, width: "100%", maxWidth: 520, maxHeight: "85vh", overflow: "auto", boxShadow: "0 24px 64px rgba(0,0,0,0.5)", padding: "16px 20px" }}>
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: T.overlay, zIndex: 900, display: "flex", alignItems: mobile ? "flex-end" : "center", justifyContent: "center", padding: mobile ? 0 : 20 }}>
+      <div onClick={e => e.stopPropagation()} style={{ background: T.card, border: `1px solid ${T.cardBorder}`, borderRadius: mobile ? "14px 14px 0 0" : 14, width: "100%", maxWidth: 520, maxHeight: mobile ? "85dvh" : "85vh", overflow: "auto", boxShadow: "0 24px 64px rgba(0,0,0,0.5)", padding: "16px 20px" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
           <div style={{ fontSize: 16, fontWeight: 800, color: T.text }}>🧪 Labs — experiments</div>
           <button onClick={onClose} style={{ background: "none", border: "none", color: T.muted, fontSize: 18, cursor: "pointer" }}>×</button>

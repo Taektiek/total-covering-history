@@ -5,6 +5,7 @@ import { useState, useEffect } from "react";
 import {
   PRESETS, CATEGORIES, yearLabel, searchPeople, fetchPersonDates, fetchPersonDetails,
 } from "./lib";
+import { useIsMobile } from "./useIsMobile";
 
 // Loads display info (label, years, Wikipedia thumbnail) for one person.
 function usePersonInfo(qid) {
@@ -138,7 +139,7 @@ function PersonPicker({ placeholder, value, onChange, T }) {
   );
 }
 
-function CustomForm({ T, onStart, busy }) {
+function CustomForm({ T, onStart, busy, mobile }) {
   const [anchor, setAnchor] = useState(null);
   const [end, setEnd] = useState(null);
   const [endYear, setEndYear] = useState("");
@@ -164,7 +165,7 @@ function CustomForm({ T, onStart, busy }) {
     <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: "16px 18px", marginBottom: 20 }}>
       <div style={{ fontSize: 15, fontWeight: 800, color: T.text, marginBottom: 2 }}>⚙️ Custom Challenge</div>
       <div style={{ fontSize: 11.5, color: T.muted, marginBottom: 12 }}>Pick the starting person (their birth opens the timeline), optionally an ending person (their death closes it) or a fixed end year, and who is allowed to join.</div>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 120px", gap: 12, marginBottom: 12 }}>
+      <div style={{ display: "grid", gridTemplateColumns: mobile ? "1fr" : "1fr 1fr 120px", gap: 12, marginBottom: 12 }}>
         <div>
           <div style={{ fontSize: 11, color: T.muted, marginBottom: 4 }}>Start (anchor) person *</div>
           <PersonPicker placeholder="e.g. Socrates…" value={anchor} onChange={setAnchor} T={T} />
@@ -195,20 +196,22 @@ function CustomForm({ T, onStart, busy }) {
   );
 }
 
-export default function StartScreen({ T, dark, setDark, onStart, onLoadFile, loadError, busy, records }) {
+export default function StartScreen({ T, dark, setDark, onStart, onLoadFile, loadError, busy, records, mobile: mobileProp }) {
+  const detectedMobile = useIsMobile();
+  const mobile = mobileProp ?? detectedMobile;
   return (
-    <div style={{ minHeight: "100vh", background: T.bg, color: T.text, fontFamily: "system-ui,sans-serif" }}>
-      <div style={{ maxWidth: 860, margin: "0 auto", padding: "40px 20px 60px" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <div>
-            <div style={{ fontSize: 30, fontWeight: 900, letterSpacing: -0.5 }}>🕰️ Timeline Total Cover</div>
-            <div style={{ color: T.muted, fontSize: 14, marginTop: 6 }}>
+    <div style={{ minHeight: "100dvh", background: T.bg, color: T.text, fontFamily: "system-ui,sans-serif", touchAction: "manipulation" }}>
+      <div style={{ maxWidth: 860, margin: "0 auto", padding: mobile ? "20px 14px 40px" : "40px 20px 60px" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontSize: mobile ? 22 : 30, fontWeight: 900, letterSpacing: -0.5 }}>🕰️ Timeline Total Cover</div>
+            <div style={{ color: T.muted, fontSize: mobile ? 12 : 14, marginTop: 6 }}>
               Cover all of history with the lifespans of as few people as possible. Pick a challenge:
             </div>
           </div>
-          <div style={{ display: "flex", gap: 6 }}>
-            <label style={{ padding: "6px 12px", background: T.accentBg, border: `1px solid ${T.accentBorder}`, borderRadius: 6, color: T.accent, fontSize: 12, fontWeight: 600, cursor: "pointer" }}>
-              📂 Load saved game
+          <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
+            <label style={{ padding: "6px 12px", background: T.accentBg, border: `1px solid ${T.accentBorder}`, borderRadius: 6, color: T.accent, fontSize: 12, fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap" }}>
+              📂 {mobile ? "Load" : "Load saved game"}
               <input type="file" accept=".json" style={{ display: "none" }} onChange={e => { const f = e.target.files?.[0]; if (f) { e.target.value = ""; onLoadFile(f); } }} />
             </label>
             <button onClick={() => setDark(d => !d)} style={{ padding: "6px 10px", background: T.accentBg, border: `1px solid ${T.accentBorder}`, borderRadius: 6, cursor: "pointer", fontSize: 13 }}>{dark ? "☀️" : "🌙"}</button>
@@ -216,9 +219,9 @@ export default function StartScreen({ T, dark, setDark, onStart, onLoadFile, loa
         </div>
         {loadError && <div style={{ color: "#e07b54", fontSize: 13, marginTop: 12 }}>{loadError}</div>}
 
-        <CustomForm T={T} onStart={onStart} busy={busy} />
+        <CustomForm T={T} onStart={onStart} busy={busy} mobile={mobile} />
 
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(380px, 1fr))", gap: 14 }}>
+        <div style={{ display: "grid", gridTemplateColumns: mobile ? "1fr" : "repeat(auto-fill, minmax(380px, 1fr))", gap: 14 }}>
           {PRESETS.map(p => <PresetCard key={p.key} preset={p} T={T} onPick={onStart} busy={busy} records={records} />)}
         </div>
 
