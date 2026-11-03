@@ -11,9 +11,9 @@ const NAME_PX = 150;   // bar pixel width at which the name appears too
 export default function Timeline({ people, view, setView, bounds, gaps, range, onGapClick, hideGaps = false, wikiTitles, onHover, onSelectPerson, T }) {
   const tlRef = useRef(null);
   const dragRef = useRef(null);
-  const justDraggedRef = useRef(false);
   const [width, setWidth] = useState(900);
   const [dragSel, setDragSel] = useState(null); // {lo, hi} in percent
+  const [hoverGap, setHoverGap] = useState(null); // index of the hovered gap
 
   useEffect(() => {
     if (!tlRef.current) return;
@@ -43,7 +43,6 @@ export default function Timeline({ people, view, setView, bounds, gaps, range, o
   const onPointerDown = (e) => {
     if (e.button !== 0) return;
     e.preventDefault();
-    justDraggedRef.current = false;
     const target = e.currentTarget;
     target.setPointerCapture(e.pointerId);
     const mode = e.shiftKey ? "select" : "pan";
@@ -81,7 +80,6 @@ export default function Timeline({ people, view, setView, bounds, gaps, range, o
     const d = dragRef.current;
     if (!d) return;
     dragRef.current = null;
-    justDraggedRef.current = d.moved;
     if (e) e.currentTarget.releasePointerCapture?.(e.pointerId);
     setDragSel(null);
     if (d.mode === "select") {
@@ -92,6 +90,23 @@ export default function Timeline({ people, view, setView, bounds, gaps, range, o
         const ne = view[0] + hi / 100 * viewSpan;
         if (ne - ns >= 10) setView([ns, ne]);
       }
+      return;
+    }
+    // A press without movement is a click. setPointerCapture on pointerdown
+    // retargets the browser's click event to this container, so the children's
+    // onClick never fires — hit-test manually here instead.
+    if (d.moved || !e) return;
+    const el = document.elementFromPoint(e.clientX, e.clientY);
+    const gapEl = el?.closest?.("[data-gap-idx]");
+    if (gapEl) {
+      const g = gapRects[Number(gapEl.getAttribute("data-gap-idx"))];
+      if (g && !g.off) onGapClick(g.s, g.e);
+      return;
+    }
+    const barEl = el?.closest?.("[data-bar-id]");
+    if (barEl) {
+      const p = people.find(pp => pp.id === barEl.getAttribute("data-bar-id"));
+      if (p) onSelectPerson(p);
     }
   };
 
@@ -102,6 +117,12 @@ export default function Timeline({ people, view, setView, bounds, gaps, range, o
 
   const rangeL = range ? Math.max(pctInView(range[0]), 0) : 0;
   const rangeR = range ? Math.min(pctInView(range[1]), 100) : 0;
+
+  // gap rectangles in percent of the timeline box (off = outside the visible window)
+  const gapRects = gaps.map(([s, e]) => {
+    const l = Math.max(pctInView(s), 0), r = Math.min(pctInView(e), 100);
+    return { s, e, l, r, off: r <= 0 || l >= 100 };
+  });
 
   return (
     <div>
@@ -129,17 +150,20 @@ export default function Timeline({ people, view, setView, bounds, gaps, range, o
             ❓ {gaps.length} {gaps.length === 1 ? "gap" : "gaps"} hidden
           </div>
         )}
-        {!hideGaps && gaps.map(([s, e], i) => {
-          const l = Math.max(pctInView(s), 0), r = Math.min(pctInView(e), 100);
-          if (r <= 0 || l >= 100) return null;
+        {!hideGaps && gapRects.map((g, i) => {
+          if (g.off) return null;
+          const hov = hoverGap === i;
           return (
             <div key={`g${i}`}
-              onClick={(ev) => { ev.stopPropagation(); if (!justDraggedRef.current) onGapClick(s, e); }}
-              title={`Play a gap challenge for ${yearLabel(Math.round(s))} – ${yearLabel(Math.round(e))}`}
-              style={{ position: "absolute", top: 0, bottom: 0, left: `${l}%`, width: `${r - l}%`, background: T.gap,
-                borderLeft: s > view[0] ? `2px dashed ${T.gapDash}` : "none",
-                borderRight: e < view[1] ? `2px dashed ${T.gapDash}` : "none",
-                cursor: "pointer", zIndex: 1 }} />
+              data-gap-idx={i}
+              onPointerEnter={() => setHoverGap(i)}
+              onPointerLeave={() => setHoverGap(h => (h === i ? null : h))}
+              title={`Play a gap challenge for ${yearLabel(Math.round(g.s))} – ${yearLabel(Math.round(g.e))}`}
+              style={{ position: "absolute", top: 0, bottom: 0, left: `${g.l}%`, width: `${g.r - g.l}%`,
+                background: hov ? `${T.gapDash}40` : T.gap,
+                borderLeft: g.s > view[0] ? `2px ${hov ? "solid" : "dashed"} ${T.gapDash}` : "none",
+                borderRight: g.e < view[1] ? `2px ${hov ? "solid" : "dashed"} ${T.gapDash}` : "none",
+                cursor: "pointer", zIndex: 1, transition: "background 0.12s" }} />
           );
         })}
         {/* people bars */}
@@ -152,9 +176,9 @@ export default function Timeline({ people, view, setView, bounds, gaps, range, o
           const showName = barPx >= NAME_PX;
           return (
             <div key={p.id}
+              data-bar-id={p.id}
               onPointerEnter={() => onHover?.(p)}
               onPointerLeave={() => onHover?.(null)}
-              onClick={(ev) => { ev.stopPropagation(); if (!justDraggedRef.current) onSelectPerson(p); }}
               title={`${p.label}: ${yearLabel(p.birth)}–${yearLabel(p.death)}${wikiTitles[p.id] ? ` — ${wikiTitles[p.id]}` : ""}`}
               style={{ position: "absolute", top: TOP_PAD + row * (barH + ROW_GAP), height: barH,
                 left: `${l}%`, width: `${Math.max(r - l, 0.15)}%`,
