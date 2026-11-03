@@ -20,6 +20,20 @@ Data comes live from [Wikidata](https://www.wikidata.org) and [Wikipedia](https:
   - Coverage %, completion and person count are shown specifically for that range, and only people overlapping the range can be added while it's active.
 - **Save / load** your progress as a JSON file (`{ "version": 1, "ids": [...] }`), including the active challenge mode and gap range.
 - Light/dark theme.
+- **🧪 Labs** — optional toggleable experiments (all OFF by default, persisted in `localStorage`), opened via the 🧪 Labs button in game. See `docs/fun-techniques.md` for the full brainstorm. Included labs:
+  - *Δ-coverage preview* — search suggestions show `+N y` and whether they complete the active gap challenge.
+  - *Near-miss callouts* — when an add leaves a gap ≥80% covered, it says how many years are left.
+  - *Undo* — ↩ button / Ctrl+Z reverts the last add/remove.
+  - *"Holds N years alone"* — each person's unique coverage on list rows and in the detail card.
+  - *💡 Bridger suggestions* — one click to list notable people who lived inside the largest/active gap (live Wikidata query).
+  - *Gap chaining* — bridging a gap auto-starts the next-largest one, with a chain counter.
+  - *Local records* — fewest-people best per challenge/gap range (shown on the start screen and win banner).
+  - *Share links* — 🔗 copies a URL (`#c=…`) that loads the exact game.
+  - *Par & medals* — approximate par per preset, 🥇/🥈/🏅 on the win banner.
+  - *Mystery gaps* — hides the red gap regions on the timeline (count only).
+  - *Frontier-only* (core) — a new person's lifespan may overlap already-covered years by at most 60 (configurable).
+  - *Budget cap* (core) — limit the total number of people.
+  - Playsets: 🧘 chill / 🔭 discovery / ⚔️ hard one-click combinations.
 
 ## Run locally
 
