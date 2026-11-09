@@ -380,6 +380,8 @@ export default function StartScreen({ T, dark, setDark, onStart, onContinue, con
 
         <div style={{ marginTop: 28, fontSize: 10, color: T.faint2 }}>
           Data from <a href="https://www.wikidata.org" target="_blank" rel="noreferrer" style={{ color: T.faint }}>Wikidata</a> & <a href="https://en.wikipedia.org" target="_blank" rel="noreferrer" style={{ color: T.faint }}>Wikipedia</a>
+          {" · "}
+          <a href="https://0rwx.com/" target="_blank" rel="noreferrer" title="0rwx AI usage label: AI made — I curate" style={{ color: T.faint }}>AI:X</a>
         </div>
       </div>
     </div>

@@ -683,6 +683,8 @@ export default function App() {
                   : <>{yearLabel(bounds[0])} → {yearLabel(bounds[1])}</>}
                 {challenge.mode && <> · <strong style={{ color: T.accent }}>{CATEGORIES[challenge.mode].label}</strong> only</>}
                 {challenge.daily && <> · 📅 {challenge.daily.dateKey} · puzzle #{challenge.daily.n}/3</>}
+                {" · "}
+                <a href="https://0rwx.com/" target="_blank" rel="noreferrer" title="0rwx AI usage label: AI made — I curate" style={{ color: T.faint, textDecoration: "none" }}>AI:X</a>
               </div>
             </div>
             <div style={{ display: "flex", gap: 6, alignItems: "center", flexShrink: 0, position: "relative" }}>
@@ -949,6 +951,8 @@ export default function App() {
 
           <div style={{ marginTop: 24, fontSize: 10, color: T.faint2 }}>
             Data from <a href="https://www.wikidata.org" target="_blank" rel="noreferrer" style={{ color: T.faint }}>Wikidata</a> & <a href="https://en.wikipedia.org" target="_blank" rel="noreferrer" style={{ color: T.faint }}>Wikipedia</a>
+            {" · "}
+            <a href="https://0rwx.com/" target="_blank" rel="noreferrer" title="0rwx AI usage label: AI made — I curate" style={{ color: T.faint }}>AI:X</a>
           </div>
         </div>
       </div>
