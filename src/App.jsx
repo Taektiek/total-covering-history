@@ -13,7 +13,11 @@ import Timeline from "./Timeline";
 import PersonCard from "./PersonCard";
 import StartScreen from "./StartScreen";
 import LabsPanel from "./LabsPanel";
+import Leaderboard from "./Leaderboard";
 import { useIsMobile } from "./useIsMobile";
+import {
+  loadBoard, submitResult, boardFor, playerName, fmtMs,
+} from "./daily.js";
 
 export default function App() {
   const [screen, setScreen] = useState("start"); // "start" | "game"
@@ -52,6 +56,13 @@ export default function App() {
   const [undoDepth, setUndoDepth] = useState(0);
   const shareLoadedRef = useRef(false);
 
+  // daily puzzles + local leaderboard
+  const [daily, setDaily] = useState(null); // { dateKey, n } while in a daily
+  const dailyStartRef = useRef(0);
+  const [board, setBoard] = useState(() => loadBoard());
+  const [boardForModal, setBoardForModal] = useState(null); // { dateKey, n }
+  const [lastResultId, setLastResultId] = useState(null);
+
   const [challengeRange, setChallengeRange] = useState(null); // gap-challenge range
   const [customStart, setCustomStart] = useState("");
   const [customEnd, setCustomEnd] = useState("");
@@ -66,37 +77,47 @@ export default function App() {
   const startChallenge = useCallback(async (def, extraPeople = [], restoreRange = null) => {
     setStarting(true); setLoadError("");
     try {
-      const anchor = await fetchPersonFull(def.anchorId, false); // anchors may be non-human (Homer)
-      if (!anchor || anchor.birth === null) {
-        setLoadError(`Couldn't load the starting person (${def.anchorId}). Try another challenge.`);
-        setStarting(false);
-        return false;
-      }
-      let end = null;
-      if (def.endId) {
-        end = await fetchPersonFull(def.endId, false);
-        if (!end || end.death === null || end.death <= anchor.death) {
-          setLoadError(`The ending person (${def.endId}) has no usable death date after ${anchor.label}'s death.`);
+      let anchor = null, end = null, bounds = null;
+      if (def.anchorId) {
+        anchor = await fetchPersonFull(def.anchorId, false); // anchors may be non-human (Homer)
+        if (!anchor || anchor.birth === null) {
+          setLoadError(`Couldn't load the starting person (${def.anchorId}). Try another challenge.`);
           setStarting(false);
           return false;
         }
+        if (def.endId) {
+          end = await fetchPersonFull(def.endId, false);
+          if (!end || end.death === null || end.death <= anchor.death) {
+            setLoadError(`The ending person (${def.endId}) has no usable death date after ${anchor.label}'s death.`);
+            setStarting(false);
+            return false;
+          }
+        }
+        bounds = [anchor.birth, end ? end.death : (def.endYear ?? PRESENT)];
+      } else if (def.startYear != null && def.endYear != null) {
+        // range-only challenge (daily puzzles): pure year window, no anchor person
+        bounds = [def.startYear, def.endYear];
+      } else {
+        setLoadError("The challenge needs a starting person or a year range.");
+        setStarting(false);
+        return false;
       }
-      const bounds = [anchor.birth, end ? end.death : (def.endYear ?? PRESENT)];
       if (bounds[1] <= bounds[0]) {
         setLoadError("The challenge timeline is empty — pick a different start/end.");
         setStarting(false);
         return false;
       }
 
-      anchor.color = COLORS[0];
-      const preloaded = [anchor];
+      const preloaded = [];
+      if (anchor) { anchor.color = COLORS[0]; preloaded.push(anchor); }
       if (end) { end.color = COLORS[1]; preloaded.push(end); }
 
       // extra people (from a save file); anchors are never duplicated
       const failed = [];
       let nextColor = preloaded.length;
       for (const qid of extraPeople) {
-        if (qid === anchor.id || (end && qid === end.id)) continue;
+        if (anchor && qid === anchor.id) continue;
+        if (end && qid === end.id) continue;
         const person = await fetchPersonFull(qid);
         if (!person) { failed.push(qid); continue; }
         person.color = COLORS[nextColor % COLORS.length];
@@ -106,9 +127,11 @@ export default function App() {
 
       setChallenge({
         key: def.key, name: def.name, mode: def.mode ?? null, custom: !!def.custom,
-        anchorId: def.anchorId, endId: def.endId ?? null, endYear: def.endYear ?? null,
-        anchor, end, bounds,
+        anchorId: def.anchorId ?? null, endId: def.endId ?? null, endYear: def.endYear ?? null,
+        startYear: def.startYear ?? null, anchor, end, bounds, daily: def.daily ?? null,
       });
+      setDaily(def.daily ?? null);
+      dailyStartRef.current = Date.now();
       setPeople(preloaded);
       setView([bounds[0], bounds[1]]);
       setChallengeRange(restoreRange || null);
@@ -118,13 +141,26 @@ export default function App() {
       setScreen("game");
       if (failed.length) setLoadError(`Loaded with ${failed.length} unresolved ID(s): ${failed.join(", ")}`);
       setStarting(false);
-      return true;
+      return preloaded;
     } catch (err) {
       setLoadError("Failed to start challenge: " + err.message);
       setStarting(false);
       return false;
     }
   }, []);
+
+  // submit a finished daily run to the local leaderboard (best only, timed)
+  const submitDaily = useCallback((d, count) => {
+    const ms = Date.now() - dailyStartRef.current;
+    const { board: nextBoard, improved } = submitResult(board, {
+      dateKey: d.dateKey, n: d.n, name: playerName(), people: count, ms,
+    });
+    setBoard(nextBoard);
+    setLastResultId(nextBoard.entries.find(x => x.dateKey === d.dateKey && x.n === d.n)?.id ?? null);
+    setNotice(improved
+      ? `📅 Daily submitted — ${count} people in ${fmtMs(ms)}! 🏆 Open the leaderboard to see your rank.`
+      : `📅 Daily finished — ${count} people in ${fmtMs(ms)} (best stays on the board).`);
+  }, [board]);
 
   // ------------------------------------------------------------ labs
   const updateLabs = (fn) => setLabsState(prev => {
@@ -163,7 +199,7 @@ export default function App() {
       challenge: {
         key: challenge.key, name: challenge.name, mode: challenge.mode,
         anchorId: challenge.anchorId, endId: challenge.endId, endYear: challenge.endYear,
-        custom: challenge.custom,
+        startYear: challenge.startYear, custom: challenge.custom, daily: challenge.daily,
       },
       ids: people.filter(p => !isChallengePerson(p.id)).map(p => p.id),
       ...(challengeRange ? { range: [Math.round(challengeRange[0]), Math.round(challengeRange[1])] } : {}),
@@ -205,7 +241,7 @@ export default function App() {
   const coverPct = Math.min(100, (total / SPAN) * 100).toFixed(1);
 
   // the game is won once the whole timeline is covered (the anchor alone never counts)
-  const won = !!challenge && fullyCovered && people.length > 1 && !wonDismissed;
+  const won = !!challenge && fullyCovered && people.length > (challenge.anchor ? 1 : 0) && !wonDismissed;
 
   const rangeStats = challengeRange ? computeCoverage(people, bounds, challengeRange) : null;
   const rangeFullyCovered = rangeStats ? rangeStats.gaps.length === 0 : false;
@@ -299,7 +335,7 @@ export default function App() {
       setInputVal(""); return;
     }
 
-    if (dates.death <= anchor.death) {
+    if (anchor && dates.death <= anchor.death) {
       setFetchingId(null);
       setError(`"${item.label}" died before ${anchor.label}'s death — can't help cover the timeline.`);
       setInputVal(""); return;
@@ -349,9 +385,13 @@ export default function App() {
         }
       }
     }
+    const wonAfter = computeCoverage(withNew, bounds).gaps.length === 0 && withNew.length > (challenge.anchor ? 1 : 0) && !wonDismissed;
+
+    // daily puzzle: submit the finished run to the local leaderboard (best only)
+    if (daily && wonAfter && !won) submitDaily(daily, withNew.length);
+
     // records lab: persist fewest-people bests per challenge / gap range
     if (labs.records && challenge) {
-      const wonAfter = computeCoverage(withNew, bounds).gaps.length === 0 && withNew.length > 1 && !wonDismissed;
       let recs = records;
       let changed = false;
       if (wonAfter && !won) {
@@ -373,7 +413,7 @@ export default function App() {
       if (changed) setRecords(recs);
     }
     setInputVal(""); inputRef.current?.focus();
-  }, [people, challenge, challengeRange, bounds, labs, opts, largestGap, won, wonDismissed, records]);
+  }, [people, challenge, challengeRange, bounds, labs, opts, largestGap, won, wonDismissed, records, daily, submitDaily]);
 
   const handleKeyDown = (e) => {
     if (e.key === "Enter" && suggestions.length > 0) handleSelect(suggestions[0]);
@@ -394,7 +434,7 @@ export default function App() {
   };
 
   const backToMenu = () => {
-    if (people.length > 1 && !window.confirm("Leave this challenge? Unsaved progress will be lost.")) return;
+    if (people.length > (challenge?.anchor ? 1 : 0) && !window.confirm("Leave this challenge? Unsaved progress will be lost.")) return;
     setScreen("start"); setChallenge(null); setPeople([]); setLoadError("");
   };
 
@@ -406,7 +446,7 @@ export default function App() {
       challenge: {
         key: challenge.key, name: challenge.name, mode: challenge.mode,
         anchorId: challenge.anchorId, endId: challenge.endId, endYear: challenge.endYear,
-        custom: challenge.custom,
+        startYear: challenge.startYear, custom: challenge.custom, daily: challenge.daily,
       },
       ids: people.filter(p => !isChallengePerson(p.id)).map(p => p.id),
     };
@@ -433,10 +473,12 @@ export default function App() {
           key: parsed.challenge.key || "custom",
           name: parsed.challenge.name || "Loaded Challenge",
           mode: parsed.challenge.mode ?? null,
-          anchorId: parsed.challenge.anchorId,
+          anchorId: parsed.challenge.anchorId ?? null,
           endId: parsed.challenge.endId ?? null,
           endYear: parsed.challenge.endYear ?? null,
+          startYear: parsed.challenge.startYear ?? null,
           custom: !!parsed.challenge.custom,
+          daily: parsed.challenge.daily ?? null,
         };
         if (Array.isArray(parsed.range) && parsed.range.length === 2) {
           restoreRange = [Number(parsed.range[0]), Number(parsed.range[1])];
@@ -445,8 +487,13 @@ export default function App() {
         // v1 files are the original challenge: Socrates → present, no restriction
         def = { key: "classic", name: "The Classic", mode: null, anchorId: "Q913", endId: null, endYear: null, custom: false };
       }
-      if (!def.anchorId) throw new Error("The file has no starting person.");
-      await startChallenge(def, ids, restoreRange);
+      if (!def.anchorId && def.startYear == null) throw new Error("The file has no starting person or year range.");
+      const preloaded = await startChallenge(def, ids, restoreRange);
+      // a loaded daily that is already fully covered counts as a finished run
+      if (def.daily && Array.isArray(preloaded) && preloaded.length > (def.anchorId ? 1 : 0) &&
+          def.startYear != null && computeCoverage(preloaded, [def.startYear, def.endYear]).gaps.length === 0) {
+        submitDaily(def.daily, preloaded.length);
+      }
     } catch (err) {
       setLoadError("Failed to load file: " + err.message);
       setStarting(false);
@@ -489,6 +536,7 @@ export default function App() {
         loadError={loadError}
         busy={starting || loadingFile}
         records={records}
+        board={board}
       />
     );
   }
@@ -505,8 +553,11 @@ export default function App() {
                 🕰️ {challenge.name}
               </h1>
               <div style={{ fontSize: 11, color: T.muted, marginTop: 2 }}>
-                {challenge.anchor.label} ({yearLabel(bounds[0])}) → {challenge.end ? `${challenge.end.label} (${yearLabel(bounds[1])})` : `present (${yearLabel(bounds[1])})`}
+                {challenge.anchor
+                  ? <>{challenge.anchor.label} ({yearLabel(bounds[0])}) → {challenge.end ? `${challenge.end.label} (${yearLabel(bounds[1])})` : `present (${yearLabel(bounds[1])})`}</>
+                  : <>{yearLabel(bounds[0])} → {yearLabel(bounds[1])}</>}
                 {challenge.mode && <> · <strong style={{ color: T.accent }}>{CATEGORIES[challenge.mode].label}</strong> only</>}
+                {challenge.daily && <> · 📅 {challenge.daily.dateKey} #{challenge.daily.n}</>}
               </div>
             </div>
             {mobile ? (
@@ -525,6 +576,7 @@ export default function App() {
                 </button>
                 {labs.shareLink && <button style={btnStyle()} onClick={handleShare} title="Copy a link that loads this exact game">🔗 Share</button>}
                 {labs.undo && <button style={btnStyle({ opacity: undoDepth ? 1 : 0.4 })} onClick={doUndo} title="Undo last add/remove (Ctrl+Z)">↩</button>}
+                {challenge.daily && <button style={btnStyle()} onClick={() => setBoardForModal(challenge.daily)} title="Daily leaderboard">🏆</button>}
                 <button style={btnStyle()} onClick={() => setShowLabs(true)} title="Toggle experiments (labs)">🧪 Labs{activeLabIds.length > 0 ? ` ${activeLabIds.length}` : ""}</button>
                 <button style={btnStyle()} onClick={() => setDark(d => !d)}>{dark ? "☀️" : "🌙"}</button>
               </div>
@@ -542,6 +594,7 @@ export default function App() {
               </button>
               {labs.shareLink && <button style={btnStyle()} onClick={handleShare}>🔗 Share</button>}
               {labs.undo && <button style={btnStyle({ opacity: undoDepth ? 1 : 0.4 })} onClick={doUndo}>↩ Undo</button>}
+              {challenge.daily && <button style={btnStyle()} onClick={() => { setMenuOpen(false); setBoardForModal(challenge.daily); }}>🏆 Board</button>}
               <button style={btnStyle()} onClick={() => { setMenuOpen(false); setShowLabs(true); }}>🧪 Labs{activeLabIds.length > 0 ? ` ${activeLabIds.length}` : ""}</button>
             </div>
           )}
@@ -701,6 +754,12 @@ export default function App() {
                   {labs.budget && opts.budget > 0 && <span>{people.length <= opts.budget ? "🏆 within budget" : "over budget"} ({opts.budget})</span>}
                 </div>
               )}
+              {challenge.daily && (
+                <button onClick={() => setBoardForModal(challenge.daily)}
+                  style={{ marginTop: 10, padding: "7px 18px", background: T.accentBg, border: `1px solid ${T.accentBorder}`, borderRadius: 6, color: T.accent, fontWeight: 700, cursor: "pointer", fontSize: 13, ...(mobile ? { display: "block", width: "100%" } : {}) }}>
+                  🏆 Leaderboard
+                </button>
+              )}
               <button onClick={() => setWonDismissed(true)} style={{ marginTop: 10, padding: "7px 18px", background: "#5bb86a", border: "none", borderRadius: 6, color: "#0f1117", fontWeight: 700, cursor: "pointer", fontSize: 13, ...(mobile ? { display: "block", width: "100%" } : {}) }}>Keep playing</button>
               <button onClick={backToMenu} style={{ marginTop: 10, marginLeft: mobile ? 0 : 6, padding: "7px 18px", background: "transparent", border: `1px solid ${T.winBorder}`, borderRadius: 6, color: T.text, cursor: "pointer", fontSize: 13, ...(mobile ? { display: "block", width: "100%" } : {}) }}>New challenge</button>
             </div>
@@ -769,6 +828,14 @@ export default function App() {
 
       {showLabs && (
         <LabsPanel T={T} labs={labs} opts={opts} mobile={mobile} onToggle={toggleLab} onOpt={setOpt} onPlayset={applyPlayset} onClose={() => setShowLabs(false)} />
+      )}
+
+      {boardForModal && (
+        <Leaderboard
+          T={T} mobile={mobile} dateKey={boardForModal.dateKey} n={boardForModal.n}
+          entries={boardFor(board, boardForModal.dateKey, boardForModal.n)} highlightId={lastResultId}
+          onClose={() => setBoardForModal(null)}
+        />
       )}
     </div>
   );

@@ -51,7 +51,7 @@ every run.
 | 15 | **Synth sound pips**: WebAudio blip on add (pitch with coverPct), low tone on reject, arpeggio on win | tiny synth in `lib.js`, calls in `App.jsx` | adapted (juice/sfx) | idea-only |
 | 16 | **Category pre-check**: in category mode, suggestions ASK-checked as the dropdown renders, ✗ greyed | suggestion dropdown + `checkCategory` in `lib.js` | original | idea-only |
 | 17 | **Shrink-the-team (post-win)**: removal puzzle — keep full coverage with fewest people, live ✓/✗ feedback | `removePerson` + win banner in `App.jsx` | original | idea-only |
-| 18 | **Daily seeded gap**: date-seeded 250-year sub-range as shareable "Daily"; local best per date | `StartScreen.jsx` + seeded RNG in `labs.js` | adapted (daily challenges) | idea-only |
+| 18 | **Daily puzzles**: 3 date-seeded puzzles/day, spans ≤200y, era ladder (≥1800 easy / 1400–1800 medium / <1400 hard) + easier categories on easier puzzles; best-only timed local leaderboard (`src/daily.js`, `src/Leaderboard.jsx`); percentile graph deferred until a server board exists | `src/daily.js` + `StartScreen.jsx` + `App.jsx` | adapted (daily challenges) | **implemented** (percentile graph deferred) |
 | 19 | **Blitz timer**: optional countdown; HUD timer; records store time as tiebreak | `App.jsx` HUD + records | adapted (blitz modes) | idea-only |
 | 20 | **Era backdrop**: timeline background tinted by era with legend when zoomed out | `Timeline.jsx` background layer | original | idea-only |
 | 21 | **Rotating quests**: 3 quest chips per run from templates ("add someone born before 500 BC", "bridge a ≥300y gap with ≤2 people", "reach 50%"); ⭐ counter | quest generator + check in `handleSelect` | adapted (quests) | idea-only |
@@ -77,3 +77,8 @@ The "⚔️ hard" playset contains only depth levers and is never mixed into
   the depth lever bites; frontier-only stays 100% winnable), `npm run lint`
   0 warnings, `npm run build` OK. Browser playtesting not done in sandbox —
   try `npm run dev` manually.
+- 2026-11-09: gap/bar click fix + hover (verified in headless Chromium),
+  mobile responsive UI + pinch zoom (390×844 touch e2e green), and the daily
+  puzzles feature (3/day, ≤200y spans, era+category difficulty ladder, local
+  best-only leaderboard; 24 unit tests, daily e2e incl. full win→submit→board
+  loop with mocked Wikidata green).

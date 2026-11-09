@@ -6,6 +6,7 @@ Data comes live from [Wikidata](https://www.wikidata.org) and [Wikipedia](https:
 
 ## Features
 
+- **📅 Daily puzzles** — three per day (seeded by date), easiest first. Each covers a 100–200 year window (never more than 200 years): #1 is a recent window (after ~1800 — recent data is denser, so easier) with no category restriction, #2 is a 1400–1800 window with an easier category, #3 is a pre-1400 window with a harder category. Finishing a daily records your best run (fewest people, ties broken by time) on a local leaderboard (🆔 name asked once, stored in `localStorage`); the 🏆 button opens it. Compare with friends via the 🔗 share links (Labs). A percentile graph is deferred until there is a server-backed board.
 - **Search & add** any historical person (fetched live from Wikidata, with birth/death years).
 - **Coverage tracking** — the coverage bar, gaps and the win state are computed from your current list.
 - **Timeline controls**

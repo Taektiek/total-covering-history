@@ -6,6 +6,7 @@ import {
   PRESETS, CATEGORIES, yearLabel, searchPeople, fetchPersonDates, fetchPersonDetails,
 } from "./lib";
 import { useIsMobile } from "./useIsMobile";
+import { dateKeyOf, dailyPuzzles, dailyDef, bestFor, fmtMs } from "./daily.js";
 
 // Loads display info (label, years, Wikipedia thumbnail) for one person.
 function usePersonInfo(qid) {
@@ -196,9 +197,11 @@ function CustomForm({ T, onStart, busy, mobile }) {
   );
 }
 
-export default function StartScreen({ T, dark, setDark, onStart, onLoadFile, loadError, busy, records, mobile: mobileProp }) {
+export default function StartScreen({ T, dark, setDark, onStart, onLoadFile, loadError, busy, records, board, mobile: mobileProp }) {
   const detectedMobile = useIsMobile();
   const mobile = mobileProp ?? detectedMobile;
+  const todayKey = dateKeyOf();
+  const puzzles = dailyPuzzles(todayKey, new Date().getFullYear());
   return (
     <div style={{ minHeight: "100dvh", background: T.bg, color: T.text, fontFamily: "system-ui,sans-serif", touchAction: "manipulation" }}>
       <div style={{ maxWidth: 860, margin: "0 auto", padding: mobile ? "20px 14px 40px" : "40px 20px 60px" }}>
@@ -218,6 +221,32 @@ export default function StartScreen({ T, dark, setDark, onStart, onLoadFile, loa
           </div>
         </div>
         {loadError && <div style={{ color: "#e07b54", fontSize: 13, marginTop: 12 }}>{loadError}</div>}
+
+        {/* daily puzzles: three per day, easiest first, each at most 200 years */}
+        <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: "16px 18px", marginBottom: 20 }}>
+          <div style={{ fontSize: 15, fontWeight: 800, color: T.text }}>📅 Daily puzzles — {todayKey}</div>
+          <div style={{ fontSize: 11.5, color: T.muted, margin: "2px 0 12px" }}>
+            Three puzzles a day, easiest first; each covers at most 200 years. Recent windows are easier.
+            Your best (fewest people, then fastest) is kept on the local leaderboard — share links (🧪 Labs) let you compare with friends.
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: mobile ? "1fr" : "repeat(3, 1fr)", gap: 10 }}>
+            {puzzles.map(p => {
+              const best = bestFor(board, todayKey, p.n);
+              const diffLabel = p.n === 1 ? "easy" : p.n === 2 ? "medium" : "hard";
+              return (
+                <button key={p.n} onClick={() => !busy && onStart(dailyDef(todayKey, p))} disabled={busy}
+                  style={{ textAlign: "left", background: T.surface2, border: `1px solid ${T.border2}`, borderRadius: 10, padding: "10px 12px", cursor: busy ? "wait" : "pointer", color: T.text, fontFamily: "inherit" }}>
+                  <div style={{ fontSize: 13, fontWeight: 800 }}>#{p.n} · {diffLabel}</div>
+                  <div style={{ fontSize: 12, color: T.muted, marginTop: 2 }}>{yearLabel(p.startYear)} – {yearLabel(p.endYear)} ({p.endYear - p.startYear}y)</div>
+                  <div style={{ fontSize: 11, color: T.accent, marginTop: 2 }}>{p.mode ? CATEGORIES[p.mode].label : "Open category"}</div>
+                  <div style={{ fontSize: 11, color: best ? "#d4a843" : T.faint, marginTop: 2 }}>
+                    {best ? `🏆 your best: ${best.people} people · ${fmtMs(best.ms)}` : "unsolved"}
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        </div>
 
         <CustomForm T={T} onStart={onStart} busy={busy} mobile={mobile} />
 
