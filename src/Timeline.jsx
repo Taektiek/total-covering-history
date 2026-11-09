@@ -3,13 +3,13 @@
 import { useRef, useState, useEffect } from "react";
 import { assignRows, yearLabel, compactYear, MIN_SPAN } from "./lib";
 
-const BAR_H = 10, TALL_BAR_H = 16, ROW_GAP = 4, TOP_PAD = 4;
-const MAX_TL_HEIGHT = 220;
-const MAX_TL_HEIGHT_MOBILE = 150;
+const BAR_H = 12, TALL_BAR_H = 19, ROW_GAP = 5, TOP_PAD = 6;
+const MAX_TL_HEIGHT = 340;
+const MAX_TL_HEIGHT_MOBILE = 240;
 const DATES_PX = 70;   // bar pixel width at which dates appear on the bar
 const NAME_PX = 150;   // bar pixel width at which the name appears too
 
-export default function Timeline({ people, view, setView, bounds, gaps, range, onGapClick, hideGaps = false, mobile = false, wikiTitles, onHover, onSelectPerson, T }) {
+export default function Timeline({ people, view, setView, bounds, gaps, range, onGapClick, gapsClickable = false, hideGaps = false, mobile = false, wikiTitles, onHover, onSelectPerson, T }) {
   const tlRef = useRef(null);
   const dragRef = useRef(null);
   const justDraggedRef = useRef(false); // was the last pointer interaction a drag?
@@ -196,12 +196,12 @@ export default function Timeline({ people, view, setView, bounds, gaps, range, o
               data-gap-idx={i}
               onPointerEnter={() => setHoverGap(i)}
               onPointerLeave={() => setHoverGap(h => (h === i ? null : h))}
-              title={`Play a gap challenge for ${yearLabel(Math.round(g.s))} – ${yearLabel(Math.round(g.e))}`}
+              title={gapsClickable ? `Play a gap challenge for ${yearLabel(Math.round(g.s))} – ${yearLabel(Math.round(g.e))}` : `${yearLabel(Math.round(g.s))} – ${yearLabel(Math.round(g.e))} uncovered`}
               style={{ position: "absolute", top: 0, bottom: 0, left: `${g.l}%`, width: `${g.r - g.l}%`,
                 background: hov ? `${T.gapDash}40` : T.gap,
                 borderLeft: g.s > view[0] ? `2px ${hov ? "solid" : "dashed"} ${T.gapDash}` : "none",
                 borderRight: g.e < view[1] ? `2px ${hov ? "solid" : "dashed"} ${T.gapDash}` : "none",
-                cursor: "pointer", zIndex: 1, transition: "background 0.12s" }} />
+                cursor: gapsClickable ? "pointer" : "default", zIndex: 1, transition: "background 0.12s" }} />
           );
         })}
         {/* people bars */}
@@ -252,7 +252,7 @@ export default function Timeline({ people, view, setView, bounds, gaps, range, o
       </div>
       <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: T.faint, marginTop: 5, padding: "0 2px" }}>
         <span>{yearLabel(Math.round(view[0]))}</span>
-        <span style={{ color: T.muted }}>{mobile ? "drag to pan · pinch to zoom" : "drag to pan · shift+drag to zoom"}{!hideGaps ? " · tap a red gap to challenge it" : ""}</span>
+        <span style={{ color: T.muted }}>{mobile ? "drag to pan · pinch to zoom" : "drag to pan · shift+drag to zoom"}{gapsClickable && !hideGaps ? " · tap a red gap to challenge it" : ""}</span>
         <span>{yearLabel(Math.round(view[1]))}</span>
       </div>
     </div>

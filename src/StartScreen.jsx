@@ -1,9 +1,11 @@
-// Start screen: choose a pre-configured challenge (with pictures of the
-// anchor and, where set, the ending person), build a custom challenge, or
-// load a saved game.
+// Home screen, designed around one question: "what do I do now?"
+// Hero states the goal and offers the two obvious next actions (play today's
+// chained puzzles / quick tutorial), a 3-step how-to removes the rules
+// upfront, then progressive disclosure: daily chain → classic challenges →
+// custom builder (collapsed) → load a save.
 import { useState, useEffect } from "react";
 import {
-  PRESETS, CATEGORIES, yearLabel, searchPeople, fetchPersonDates, fetchPersonDetails,
+  PRESETS, CATEGORIES, TUTORIAL, TUTORIAL_DONE_KEY, yearLabel, searchPeople, fetchPersonDates, fetchPersonDetails,
 } from "./lib";
 import { useIsMobile } from "./useIsMobile";
 import { dateKeyOf, dailyPuzzles, dailyDef, bestFor, fmtMs } from "./daily.js";
@@ -34,21 +36,21 @@ function usePersonInfo(qid) {
 
 function PersonChip({ info, T, role }) {
   if (!info) return (
-    <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 130 }}>
-      <div style={{ width: 46, height: 56, borderRadius: 6, background: T.border }} />
+    <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 120 }}>
+      <div style={{ width: 44, height: 54, borderRadius: 6, background: T.border }} />
       <div style={{ fontSize: 12, color: T.muted }}>Loading…</div>
     </div>
   );
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 130 }}>
+    <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 120 }}>
       {info.image
-        ? <img src={info.image} alt={info.label} style={{ width: 46, height: 56, objectFit: "cover", borderRadius: 6, border: `2px solid ${T.border2}` }} />
-        : <div style={{ width: 46, height: 56, borderRadius: 6, background: T.surface2, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 20 }}>👤</div>}
+        ? <img src={info.image} alt={info.label} style={{ width: 44, height: 54, objectFit: "cover", borderRadius: 6, border: `2px solid ${T.border2}` }} />
+        : <div style={{ width: 44, height: 54, borderRadius: 6, background: T.surface2, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 20 }}>👤</div>}
       <div>
         <div style={{ fontSize: 12, fontWeight: 700, color: T.text, lineHeight: 1.2 }}>{info.label}</div>
         <div style={{ fontSize: 10, color: T.muted }}>
           {role === "end"
-            ? `d. ${info.birth !== null ? yearLabel(info.death ?? info.birth) : ""}`
+            ? `b. ${info.birth !== null ? yearLabel(info.birth) : ""}`
             : info.birth !== null ? `b. ${yearLabel(info.birth)}` : ""}
         </div>
       </div>
@@ -93,6 +95,46 @@ function PresetCard({ preset, T, onPick, busy, records }) {
       </div>
       <div style={{ fontSize: 11.5, color: T.muted, lineHeight: 1.5 }}>{preset.desc}</div>
     </div>
+  );
+}
+
+// One daily puzzle card: two famous people whose lives you must bridge.
+function DailyCard({ puzzle, dateKey, best, solved, T, onPick, busy, isNext }) {
+  const anchor = usePersonInfo(puzzle.anchorId);
+  const end = usePersonInfo(puzzle.endId);
+  const diffLabel = puzzle.n === 1 ? "easy" : puzzle.n === 2 ? "medium" : "hard";
+  return (
+    <button onClick={() => !busy && onPick(dailyDef(dateKey, puzzle))} disabled={busy}
+      style={{
+        textAlign: "left", background: solved ? T.surface : T.surface2,
+        border: `2px solid ${isNext ? T.accentBorder : T.border2}`, borderRadius: 12, padding: "12px 14px",
+        cursor: busy ? "wait" : "pointer", color: T.text, fontFamily: "inherit", position: "relative",
+        opacity: busy ? 0.6 : 1, transition: "border-color 0.1s, transform 0.1s",
+      }}
+      onMouseEnter={e => { e.currentTarget.style.transform = "translateY(-2px)"; }}
+      onMouseLeave={e => { e.currentTarget.style.transform = "none"; }}
+    >
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+        <span style={{ fontSize: 13, fontWeight: 800 }}>
+          #{puzzle.n} · {diffLabel}
+          {solved && <span style={{ color: "#5bb86a", marginLeft: 6 }}>✓ solved</span>}
+          {isNext && !solved && <span style={{ color: T.accent, marginLeft: 6, fontSize: 11 }}>▶ next</span>}
+        </span>
+        <span style={{ fontSize: 10, color: T.faint }}>{puzzle.span}y window</span>
+      </div>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+        <PersonChip info={anchor} T={T} role="start" />
+        <div style={{ color: T.faint, fontSize: 16 }}>→</div>
+        <PersonChip info={end} T={T} role="end" />
+      </div>
+      <div style={{ fontSize: 11, color: T.muted, marginTop: 8 }}>
+        {yearLabel(puzzle.startYear)} – {yearLabel(puzzle.endYear)}
+        {puzzle.mode && <> · <span style={{ color: T.accent, fontWeight: 700 }}>{CATEGORIES[puzzle.mode].label}</span> only</>}
+      </div>
+      <div style={{ fontSize: 11, color: best ? "#d4a843" : T.faint, marginTop: 3 }}>
+        {best ? `🏆 your best: ${best.people} people · ${fmtMs(best.ms)}` : "unsolved — bridge their lives!"}
+      </div>
+    </button>
   );
 }
 
@@ -163,9 +205,7 @@ function CustomForm({ T, onStart, busy, mobile }) {
   });
 
   return (
-    <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: "16px 18px", marginBottom: 20 }}>
-      <div style={{ fontSize: 15, fontWeight: 800, color: T.text, marginBottom: 2 }}>⚙️ Custom Challenge</div>
-      <div style={{ fontSize: 11.5, color: T.muted, marginBottom: 12 }}>Pick the starting person (their birth opens the timeline), optionally an ending person (their death closes it) or a fixed end year, and who is allowed to join.</div>
+    <div>
       <div style={{ display: "grid", gridTemplateColumns: mobile ? "1fr" : "1fr 1fr 120px", gap: 12, marginBottom: 12 }}>
         <div>
           <div style={{ fontSize: 11, color: T.muted, marginBottom: 4 }}>Start (anchor) person *</div>
@@ -197,21 +237,40 @@ function CustomForm({ T, onStart, busy, mobile }) {
   );
 }
 
-export default function StartScreen({ T, dark, setDark, onStart, onLoadFile, loadError, busy, records, board, mobile: mobileProp }) {
+const STEPS = [
+  ["🎯", "Pick a challenge", "Today's 3 puzzles chain automatically — finish one, the next starts."],
+  ["🔎", "Search & add people", "Type any name from history and click to add their lifespan to the timeline."],
+  ["🕳️", "Fill every red gap", "Every year must be covered by someone alive. Fewest people wins — your best is saved. 🏆"],
+];
+
+export default function StartScreen({ T, dark, setDark, onStart, onContinue, continueGame, onLoadFile, loadError, busy, records, board, mobile: mobileProp }) {
   const detectedMobile = useIsMobile();
   const mobile = mobileProp ?? detectedMobile;
   const todayKey = dateKeyOf();
   const puzzles = dailyPuzzles(todayKey, new Date().getFullYear());
+  const solvedCount = puzzles.filter(p => bestFor(board, todayKey, p.n)).length;
+  const firstUnsolved = puzzles.find(p => !bestFor(board, todayKey, p.n)) ?? puzzles[0];
+  const [tutorialDone, setTutorialDone] = useState(() => {
+    try { return !!localStorage.getItem(TUTORIAL_DONE_KEY); } catch { return false; }
+  });
+
+  const primaryBtn = {
+    padding: mobile ? "12px 18px" : "13px 26px", background: T.accent, color: T.bg, border: "none",
+    borderRadius: 10, fontWeight: 800, fontSize: mobile ? 14 : 15, cursor: busy ? "wait" : "pointer",
+    opacity: busy ? 0.6 : 1, boxShadow: "0 4px 14px rgba(0,0,0,0.18)",
+  };
+  const secondaryBtn = {
+    padding: mobile ? "12px 18px" : "13px 22px", background: T.accentBg, color: T.accent,
+    border: `1px solid ${T.accentBorder}`, borderRadius: 10, fontWeight: 700, fontSize: mobile ? 14 : 15,
+    cursor: busy ? "wait" : "pointer", whiteSpace: "nowrap",
+  };
+
   return (
     <div style={{ minHeight: "100dvh", background: T.bg, color: T.text, fontFamily: "system-ui,sans-serif", touchAction: "manipulation" }}>
-      <div style={{ maxWidth: 860, margin: "0 auto", padding: mobile ? "20px 14px 40px" : "40px 20px 60px" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
-          <div style={{ minWidth: 0 }}>
-            <div style={{ fontSize: mobile ? 22 : 30, fontWeight: 900, letterSpacing: -0.5 }}>🕰️ Timeline Total Cover</div>
-            <div style={{ color: T.muted, fontSize: mobile ? 12 : 14, marginTop: 6 }}>
-              Cover all of history with the lifespans of as few people as possible. Pick a challenge:
-            </div>
-          </div>
+      <div style={{ maxWidth: 880, margin: "0 auto", padding: mobile ? "16px 14px 40px" : "32px 20px 60px" }}>
+        {/* header */}
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, marginBottom: mobile ? 16 : 24 }}>
+          <div style={{ fontSize: mobile ? 18 : 21, fontWeight: 900, letterSpacing: -0.5 }}>🕰️ Timeline Total Cover</div>
           <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
             <label style={{ padding: "6px 12px", background: T.accentBg, border: `1px solid ${T.accentBorder}`, borderRadius: 6, color: T.accent, fontSize: 12, fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap" }}>
               📂 {mobile ? "Load" : "Load saved game"}
@@ -220,39 +279,104 @@ export default function StartScreen({ T, dark, setDark, onStart, onLoadFile, loa
             <button onClick={() => setDark(d => !d)} style={{ padding: "6px 10px", background: T.accentBg, border: `1px solid ${T.accentBorder}`, borderRadius: 6, cursor: "pointer", fontSize: 13 }}>{dark ? "☀️" : "🌙"}</button>
           </div>
         </div>
-        {loadError && <div style={{ color: "#e07b54", fontSize: 13, marginTop: 12 }}>{loadError}</div>}
+        {loadError && <div style={{ color: "#e07b54", fontSize: 13, marginBottom: 12 }}>{loadError}</div>}
 
-        {/* daily puzzles: three per day, easiest first, each at most 200 years */}
-        <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: "16px 18px", marginBottom: 20 }}>
-          <div style={{ fontSize: 15, fontWeight: 800, color: T.text }}>📅 Daily puzzles — {todayKey}</div>
-          <div style={{ fontSize: 11.5, color: T.muted, margin: "2px 0 12px" }}>
-            Three puzzles a day, easiest first; each covers at most 200 years. Recent windows are easier.
-            Your best (fewest people, then fastest) is kept on the local leaderboard — share links (🧪 Labs) let you compare with friends.
+        {/* continue autosaved game — the most likely next action if one exists */}
+        {continueGame?.challenge && (
+          <button onClick={() => !busy && onContinue()} disabled={busy}
+            style={{ display: "block", width: "100%", textAlign: "left", background: T.accentBg, border: `2px solid ${T.accentBorder}`, borderRadius: 14, padding: mobile ? "14px 16px" : "16px 20px", marginBottom: 14, cursor: busy ? "wait" : "pointer", color: T.text, fontFamily: "inherit", opacity: busy ? 0.6 : 1 }}
+            onMouseEnter={e => { e.currentTarget.style.transform = "translateY(-1px)"; }}
+            onMouseLeave={e => { e.currentTarget.style.transform = "none"; }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+              <div style={{ fontSize: mobile ? 15 : 17, fontWeight: 800, color: T.accent }}>▶ Continue where you left off</div>
+              <div style={{ fontSize: 12, color: T.muted }}>
+                {continueGame.progress
+                  ? `${continueGame.progress.people} ${continueGame.progress.people === 1 ? "person" : "people"} added · ${continueGame.progress.coverPct}% covered`
+                  : "saved game"}
+              </div>
+            </div>
+            <div style={{ fontSize: 13, color: T.text, marginTop: 4, fontWeight: 600 }}>
+              🕰️ {continueGame.challenge.name}
+              {continueGame.challenge.daily && <> · 📅 puzzle #{continueGame.challenge.daily.n}/3</>}
+            </div>
+          </button>
+        )}
+
+        {/* hero */}
+        <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 16, padding: mobile ? "18px 16px" : "28px 30px", marginBottom: 14 }}>
+          <h1 style={{ fontSize: mobile ? 24 : 32, fontWeight: 900, letterSpacing: -0.8, margin: "0 0 10px", lineHeight: 1.15 }}>
+            Cover all of history with as few lives as possible.
+          </h1>
+          <p style={{ fontSize: mobile ? 13.5 : 15, color: T.muted, lineHeight: 1.55, margin: "0 0 18px", maxWidth: 640 }}>
+            Every year on the timeline must be covered by someone who was alive. Bridge the gap between
+            two famous lives — search anyone in history, add their lifespan, and win with the fewest people.
+          </p>
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 20 }}>
+            <button onClick={() => !busy && onStart(dailyDef(todayKey, firstUnsolved))} disabled={busy} style={primaryBtn}>
+              ▶ Play today's puzzles {solvedCount > 0 && `(${solvedCount}/3 done)`}
+            </button>
+            <button onClick={() => { if (!busy) { setTutorialDone(true); onStart({ ...TUTORIAL, custom: false }); } }} disabled={busy} style={secondaryBtn}
+              title={TUTORIAL.desc}>
+              👋 Quick tutorial {tutorialDone ? "✓" : "(1 min)"}
+            </button>
           </div>
+          <div style={{ fontSize: 11.5, color: T.faint, margin: "-8px 0 16px" }}>
+            💾 Your game autosaves in this browser — close the tab and reopen anytime to continue where you left off.
+          </div>
+          {/* how it works */}
           <div style={{ display: "grid", gridTemplateColumns: mobile ? "1fr" : "repeat(3, 1fr)", gap: 10 }}>
-            {puzzles.map(p => {
-              const best = bestFor(board, todayKey, p.n);
-              const diffLabel = p.n === 1 ? "easy" : p.n === 2 ? "medium" : "hard";
-              return (
-                <button key={p.n} onClick={() => !busy && onStart(dailyDef(todayKey, p))} disabled={busy}
-                  style={{ textAlign: "left", background: T.surface2, border: `1px solid ${T.border2}`, borderRadius: 10, padding: "10px 12px", cursor: busy ? "wait" : "pointer", color: T.text, fontFamily: "inherit" }}>
-                  <div style={{ fontSize: 13, fontWeight: 800 }}>#{p.n} · {diffLabel}</div>
-                  <div style={{ fontSize: 12, color: T.muted, marginTop: 2 }}>{yearLabel(p.startYear)} – {yearLabel(p.endYear)} ({p.endYear - p.startYear}y)</div>
-                  <div style={{ fontSize: 11, color: T.accent, marginTop: 2 }}>{p.mode ? CATEGORIES[p.mode].label : "Open category"}</div>
-                  <div style={{ fontSize: 11, color: best ? "#d4a843" : T.faint, marginTop: 2 }}>
-                    {best ? `🏆 your best: ${best.people} people · ${fmtMs(best.ms)}` : "unsolved"}
-                  </div>
-                </button>
-              );
-            })}
+            {STEPS.map(([icon, title, desc]) => (
+              <div key={title} style={{ background: T.surface2, border: `1px solid ${T.border}`, borderRadius: 10, padding: "10px 12px" }}>
+                <div style={{ fontSize: 13, fontWeight: 800, color: T.text, marginBottom: 3 }}>{icon} {title}</div>
+                <div style={{ fontSize: 11.5, color: T.muted, lineHeight: 1.45 }}>{desc}</div>
+              </div>
+            ))}
           </div>
         </div>
 
-        <CustomForm T={T} onStart={onStart} busy={busy} mobile={mobile} />
+        {/* daily chain */}
+        <div style={{ display: "flex", alignItems: "center", gap: 10, margin: "22px 0 10px" }}>
+          <div style={{ fontSize: 16, fontWeight: 800 }}>📅 Today's puzzles — {todayKey}</div>
+          <div style={{ fontSize: 11, fontWeight: 700, color: solvedCount === 3 ? "#5bb86a" : T.accent, background: T.accentBg, border: `1px solid ${T.accentBorder}`, borderRadius: 12, padding: "2px 10px" }}>
+            {solvedCount}/3 solved
+          </div>
+        </div>
+        <div style={{ fontSize: 11.5, color: T.muted, marginBottom: 12 }}>
+          Three fresh pairs of famous lives each day, easiest first. Finish one and the next starts automatically —
+          your best (fewest people, then fastest) is saved locally and shareable via 🔗.
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: mobile ? "1fr" : "repeat(3, 1fr)", gap: 12, marginBottom: 8 }}>
+          {puzzles.map((p, i) => (
+            <div key={p.n} style={{ display: "flex", alignItems: "stretch", gap: 0 }}>
+              <div style={{ flex: 1 }}>
+                <DailyCard
+                  puzzle={p} dateKey={todayKey} T={T} busy={busy}
+                  best={bestFor(board, todayKey, p.n)} solved={!!bestFor(board, todayKey, p.n)}
+                  isNext={p.n === firstUnsolved.n} onPick={onStart}
+                />
+              </div>
+              {i < puzzles.length - 1 && !mobile && <div style={{ alignSelf: "center", color: T.faint, fontSize: 16, margin: "0 2px" }}>→</div>}
+            </div>
+          ))}
+        </div>
 
+        {/* classic challenges */}
+        <div style={{ fontSize: 16, fontWeight: 800, margin: "26px 0 10px" }}>🏛️ Classic challenges</div>
         <div style={{ display: "grid", gridTemplateColumns: mobile ? "1fr" : "repeat(auto-fill, minmax(380px, 1fr))", gap: 14 }}>
           {PRESETS.map(p => <PresetCard key={p.key} preset={p} T={T} onPick={onStart} busy={busy} records={records} />)}
         </div>
+
+        {/* custom builder — progressive disclosure */}
+        <details style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: "12px 18px", marginTop: 22 }}>
+          <summary style={{ cursor: "pointer", fontSize: 15, fontWeight: 800, color: T.text }}>
+            ⚙️ Build a custom challenge
+          </summary>
+          <div style={{ fontSize: 11.5, color: T.muted, margin: "6px 0 14px" }}>
+            Pick the starting person (their birth opens the timeline), optionally an ending person (their death
+            closes it) or a fixed end year, and who is allowed to join.
+          </div>
+          <CustomForm T={T} onStart={onStart} busy={busy} mobile={mobile} />
+        </details>
 
         <div style={{ marginTop: 28, fontSize: 10, color: T.faint2 }}>
           Data from <a href="https://www.wikidata.org" target="_blank" rel="noreferrer" style={{ color: T.faint }}>Wikidata</a> & <a href="https://en.wikipedia.org" target="_blank" rel="noreferrer" style={{ color: T.faint }}>Wikipedia</a>

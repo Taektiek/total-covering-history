@@ -20,12 +20,10 @@ export const LAB_DEFS = [
     desc: "Show each person's unique coverage on list rows and in the detail card." },
   { id: "bridgers", name: "💡 Bridger suggestions", ui: "live",
     desc: "Offer notable people who lived inside the largest gap (live Wikidata query), one click to add." },
+  { id: "gapChallenge", name: "🎯 Gap challenges", ui: "live",
+    desc: "Click any red gap on the timeline (or the “largest gap” button) to bridge just that range with as few people as possible; custom start/end years in the 🎯 panel." },
   { id: "gapChain", name: "Gap chaining", ui: "live",
-    desc: "Auto-start the next-largest gap when one is bridged; show a chain ×k counter." },
-  { id: "records", name: "Local records", ui: "live",
-    desc: "Remember your fewest-people best per challenge and per gap range (localStorage)." },
-  { id: "shareLink", name: "Share links", ui: "live",
-    desc: "Encode the current game in the URL hash (#c=…); auto-loads when opened." },
+    desc: "With gap challenges on: auto-start the next-largest gap when one is bridged; show a chain ×k counter." },
   { id: "parMedals", name: "Par & medals", ui: "live",
     desc: "Show par (approx. minimum people) in the HUD; award 🥇/🥈/🏅 on the win banner." },
   { id: "mysteryGaps", name: "Mystery gaps", ui: "live",
@@ -42,8 +40,8 @@ export const DEFAULT_OPTS = { maxOverlapYears: 60, budget: 0 };
 // Curated one-click combinations. "hard" deliberately contains only depth
 // levers; "chill" only feedback/safety levers.
 export const PLAYSETS = {
-  "🧘 chill": ["deltaPreview", "nearMiss", "undo", "holdsYears", "records"],
-  "🔭 discovery": ["bridgers", "gapChain", "parMedals", "shareLink", "deltaPreview"],
+  "🧘 chill": ["deltaPreview", "nearMiss", "undo", "holdsYears"],
+  "🔭 discovery": ["bridgers", "gapChallenge", "gapChain", "parMedals", "deltaPreview"],
   "⚔️ hard": ["maxOverlap", "budget", "mysteryGaps"],
 };
 
@@ -63,8 +61,9 @@ export function medalFor(count, par) {
 }
 
 // ------------------------------------------------------------- persistence
+// (Local records and share links are standard features now — see
+// src/features.js — they are no longer labs.)
 const LABS_KEY = "ttc-labs-v1";
-const REC_KEY = "ttc-records-v1";
 
 function defaultStore() {
   try { return typeof localStorage !== "undefined" ? localStorage : null; } catch { return null; }
@@ -89,22 +88,6 @@ export function saveLabs(labs, opts, storage) {
   const s = storage ?? defaultStore();
   if (!s) return;
   try { s.setItem(LABS_KEY, JSON.stringify({ labs, opts })); } catch { /* private mode */ }
-}
-
-export function loadRecords(storage) {
-  const s = storage ?? defaultStore();
-  if (!s) return {};
-  try { return JSON.parse(s.getItem(REC_KEY) || "{}") || {}; } catch { return {}; }
-}
-
-// Returns { records, isRecord } — records updated with the better (lower) count.
-export function recordResult(records, key, count, storage) {
-  const prev = records[key];
-  const isRecord = prev === undefined || count < prev;
-  const next = { ...records, [key]: isRecord ? count : prev };
-  const s = storage ?? defaultStore();
-  if (s) { try { s.setItem(REC_KEY, JSON.stringify(next)); } catch { /* ignore */ } }
-  return { records: next, isRecord };
 }
 
 // ------------------------------------------------------------ pure helpers
@@ -184,23 +167,4 @@ export function nearMiss(cand, range, people, bounds, thresh = 0.8) {
   const left = rangeYearsLeft(cand, range, people, bounds);
   const frac = 1 - left / span;
   return frac >= thresh && left > 0 ? { left, frac } : null;
-}
-
-// ------------------------------------------------------------ share links
-
-export function encodeShare(payload) {
-  const json = JSON.stringify(payload);
-  const b64 = typeof btoa === "function"
-    ? btoa(unescape(encodeURIComponent(json)))
-    : Buffer.from(json, "utf8").toString("base64");
-  return b64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-}
-
-export function decodeShare(str) {
-  let b64 = String(str).replace(/-/g, "+").replace(/_/g, "/");
-  while (b64.length % 4) b64 += "=";
-  const json = typeof atob === "function"
-    ? decodeURIComponent(escape(atob(b64)))
-    : Buffer.from(b64, "base64").toString("utf8");
-  return JSON.parse(json);
 }

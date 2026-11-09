@@ -76,8 +76,8 @@ export const CATEGORIES = {
                 pattern: "wdt:P106/wdt:P279* wd:Q901" },
   philosophers:{ label: "🤔 Philosophers", description: "only people whose occupation is a kind of philosopher",
                 pattern: "wdt:P106/wdt:P279* wd:Q4964182" },
-  artists:    { label: "🎨 Artists",    description: "only people whose occupation is a kind of artist",
-                pattern: "wdt:P106/wdt:P279* wd:Q483501" },
+  artists:    { label: "🎨 Artists",    description: "only people whose occupation is a kind of artist (incl. visual artists — painters etc. sit under “visual artist”, a sibling of “artist” in Wikidata)",
+                pattern: "wdt:P106/wdt:P279* ?catRoot . FILTER(?catRoot IN (wd:Q483501, wd:Q3391743))" },
   writers:    { label: "✍️ Writers",    description: "only people whose occupation is a kind of writer",
                 pattern: "wdt:P106/wdt:P279* wd:Q36180" },
   rulers:     { label: "👑 Rulers",     description: "only people whose occupation is a kind of monarch",
@@ -105,6 +105,17 @@ export const PRESETS = [
   { key: "rulers", name: "Rulers of the World", mode: "rulers", anchorId: "Q36359",
     desc: "Hammurabi, lawgiver of Babylon → present. Only monarchs may be added — nearly four millennia of history." },
 ];
+
+// The short tutorial: a very easy puzzle bridging two recent, well-known
+// lives — John Lennon (1940–1980) to Harry Styles (b. 1994, alive). The gap
+// 1980–1994 is bridged by a single well-chosen person (e.g. Madonna).
+export const TUTORIAL = {
+  key: "tutorial", name: "Tutorial — Lennon → Styles", mode: null,
+  anchorId: "Q1203", endId: "Q3626966", custom: false, tutorial: true,
+  desc: "Bridge the gap between John Lennon's death (1980) and Harry Styles' birth (1994) — one person who lived across both, like Madonna, covers it.",
+};
+
+export const TUTORIAL_DONE_KEY = "ttc-tutorial-done";
 
 // ------------------------------------------------------------- Wikidata
 

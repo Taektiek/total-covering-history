@@ -1,13 +1,14 @@
 // Unit tests for the labs (toggleable experiments) and the pure helpers they
 // rely on. Run: npm test  (node --test tests/)
+// (Records and share links are standard features now — see tests/features.test.mjs.)
 import test from "node:test";
 import assert from "node:assert/strict";
 import { computeCoverage } from "../src/lib.js";
 import {
   LAB_DEFS, DEFAULT_LABS, DEFAULT_OPTS, PLAYSETS, PARS, medalFor,
-  loadLabs, saveLabs, loadRecords, recordResult,
+  loadLabs, saveLabs,
   canAddPerson, marginalYears, nextLargestGap, rangeYearsLeft, nearMiss,
-  coveredIntervals, overlapYears, encodeShare, decodeShare,
+  coveredIntervals, overlapYears,
 } from "../src/labs.js";
 
 function memStorage() {
@@ -26,6 +27,10 @@ test("all labs default OFF (base game unchanged)", () => {
   assert.equal(new Set(LAB_DEFS.map(d => d.id)).size, LAB_DEFS.length);
   for (const d of LAB_DEFS) assert.equal(DEFAULT_LABS[d.id], false, `${d.id} must default off`);
   assert.deepEqual(DEFAULT_OPTS, { maxOverlapYears: 60, budget: 0 });
+  // gap challenges are a lab; records & share links are standard (not labs)
+  const ids = LAB_DEFS.map(d => d.id);
+  assert.ok(ids.includes("gapChallenge"));
+  assert.ok(!ids.includes("records") && !ids.includes("shareLink"));
 });
 
 test("playsets reference only known lab ids", () => {
@@ -71,19 +76,6 @@ test("saveLabs + loadLabs round-trip", () => {
   assert.equal(labs.mysteryGaps, true);
   assert.equal(opts.maxOverlapYears, 5);
   assert.equal(opts.budget, 12);
-});
-
-test("recordResult keeps the lower count and reports records", () => {
-  const s = memStorage();
-  let r = recordResult({}, "classic", 10, s);
-  assert.equal(r.isRecord, true);
-  r = recordResult(r.records, "classic", 8, s);
-  assert.equal(r.isRecord, true);
-  assert.equal(r.records.classic, 8);
-  r = recordResult(r.records, "classic", 12, s);
-  assert.equal(r.isRecord, false);
-  assert.equal(r.records.classic, 8);
-  assert.deepEqual(loadRecords(s), { classic: 8 });
 });
 
 // ------------------------------------------------------------ canAddPerson
@@ -163,18 +155,4 @@ test("nearMiss: >=80% but incomplete is a near-miss, complete is not", () => {
   assert.equal(nearMiss({ birth: 500, death: 1000 }, range, people, [0, 1000]), null);
   assert.equal(nearMiss({ birth: 500, death: 700 }, range, people, [0, 1000]), null);
   assert.equal(rangeYearsLeft({ birth: 500, death: 950 }, range, people, [0, 1000]), 50);
-});
-
-// ------------------------------------------------------------ share links
-
-test("share encode/decode round-trips (incl. unicode and BC years)", () => {
-  const payload = {
-    v: 1,
-    challenge: { key: "women", name: "Women of History", mode: "women", anchorId: "Q17892", endId: null, endYear: null, custom: false },
-    ids: ["Q1", "Q2"],
-    range: [-470, 180],
-  };
-  const s = encodeShare(payload);
-  assert.ok(!/[+/=]/.test(s), "url-safe alphabet");
-  assert.deepEqual(decodeShare(s), payload);
 });

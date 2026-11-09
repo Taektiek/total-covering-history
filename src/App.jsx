@@ -1,23 +1,53 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import {
-  PRESENT, MIN_SPAN, COLORS, DARK, LIGHT,
+  PRESENT, MIN_SPAN, COLORS, DARK, LIGHT, TUTORIAL_DONE_KEY,
   yearLabel, wikiUrl, computeCoverage, searchPeople, fetchPersonDates, fetchPersonFull,
   fetchWikiTitles, fetchPeopleDates, suggestBridgers, CATEGORIES, checkCategory,
 } from "./lib";
 import {
-  LAB_DEFS, loadLabs, saveLabs, loadRecords, recordResult,
+  DEFAULT_LABS, DEFAULT_OPTS,
   canAddPerson, marginalYears, nextLargestGap, nearMiss,
-  encodeShare, decodeShare, PARS, medalFor,
+  PARS, medalFor,
 } from "./labs.js";
+import { loadRecords, recordResult, encodeShare, decodeShare, loadAutosave, saveAutosave, clearAutosave } from "./features.js";
 import Timeline from "./Timeline";
 import PersonCard from "./PersonCard";
 import StartScreen from "./StartScreen";
-import LabsPanel from "./LabsPanel";
 import Leaderboard from "./Leaderboard";
 import { useIsMobile } from "./useIsMobile";
 import {
-  loadBoard, submitResult, boardFor, playerName, fmtMs,
+  loadBoard, submitResult, boardFor, playerName, fmtMs, dailyPuzzles, dailyDef, nextDaily,
 } from "./daily.js";
+
+// ☰ dropdown with the secondary actions (save/load/share/labs/…), kept out of
+// the main view so the primary interactions stay uncluttered.
+function GameMenu({ T, items, loadingFile, onAction, onClose, fileInput }) {
+  const itemStyle = {
+    display: "block", width: "100%", textAlign: "left", padding: "8px 12px", fontSize: 13,
+    background: "none", border: "none", borderRadius: 6, color: T.text, cursor: "pointer", whiteSpace: "nowrap",
+  };
+  return (
+    <>
+      <div style={{ position: "fixed", inset: 0, zIndex: 90 }} onClick={onClose} />
+      <div style={{ position: "absolute", right: 0, top: "110%", zIndex: 100, background: T.surface2, border: `1px solid ${T.border2}`, borderRadius: 10, boxShadow: "0 8px 24px rgba(0,0,0,0.35)", padding: 6, display: "flex", flexDirection: "column", minWidth: 190 }}>
+        {items.map(it => (
+          <button key={it.key} onClick={() => onAction(it.key)}
+            style={itemStyle}
+            onMouseEnter={e => { e.currentTarget.style.background = T.accentBg; }}
+            onMouseLeave={e => { e.currentTarget.style.background = "none"; }}>
+            {it.label}
+          </button>
+        ))}
+        <label style={{ ...itemStyle, color: loadingFile ? T.faint : T.text, cursor: loadingFile ? "wait" : "pointer" }}
+          onMouseEnter={e => { if (!loadingFile) e.currentTarget.style.background = T.accentBg; }}
+          onMouseLeave={e => { e.currentTarget.style.background = "none"; }}>
+          {loadingFile ? "⏳ Loading…" : "📂 Load from file"}
+          {fileInput}
+        </label>
+      </div>
+    </>
+  );
+}
 
 export default function App() {
   const [screen, setScreen] = useState("start"); // "start" | "game"
@@ -43,9 +73,10 @@ export default function App() {
   const [wikiTitles, setWikiTitles] = useState({});
   const [wonDismissed, setWonDismissed] = useState(false);
 
-  // labs (toggleable experiments) — see docs/fun-techniques.md
-  const [{ labs, opts }, setLabsState] = useState(() => loadLabs());
-  const [showLabs, setShowLabs] = useState(false);
+  // labs are compiled out of this build: flags stay at their defaults (all
+  // OFF), so the base game is what ships
+  const labs = DEFAULT_LABS;
+  const opts = DEFAULT_OPTS;
   const [records, setRecords] = useState(() => loadRecords());
   const [chain, setChain] = useState(0);
   const [notice, setNotice] = useState("");
@@ -129,6 +160,7 @@ export default function App() {
         key: def.key, name: def.name, mode: def.mode ?? null, custom: !!def.custom,
         anchorId: def.anchorId ?? null, endId: def.endId ?? null, endYear: def.endYear ?? null,
         startYear: def.startYear ?? null, anchor, end, bounds, daily: def.daily ?? null,
+        tutorial: !!def.tutorial,
       });
       setDaily(def.daily ?? null);
       dailyStartRef.current = Date.now();
@@ -163,22 +195,9 @@ export default function App() {
   }, [board]);
 
   // ------------------------------------------------------------ labs
-  const updateLabs = (fn) => setLabsState(prev => {
-    const next = fn(prev);
-    saveLabs(next.labs, next.opts);
-    return next;
-  });
-  const toggleLab = (id, on) => updateLabs(prev => ({ ...prev, labs: { ...prev.labs, [id]: on } }));
-  const setOpt = (k, v) => updateLabs(prev => ({ ...prev, opts: { ...prev.opts, [k]: v } }));
-  const applyPlayset = (ids) => updateLabs(prev => ({
-    labs: Object.fromEntries(LAB_DEFS.map(d => [d.id, ids ? ids.includes(d.id) : false])),
-    opts: prev.opts,
-  }));
-  const activeLabIds = LAB_DEFS.map(d => d.id).filter(id => labs[id]);
-
-  // share-link lab: auto-load a game encoded in the URL hash (mount-time init)
+  // share links (standard feature): auto-load a game encoded in the URL hash
   useEffect(() => {
-    if (shareLoadedRef.current || !labs.shareLink) return;
+    if (shareLoadedRef.current) return;
     const h = window.location.hash;
     if (!h.startsWith("#c=")) return;
     shareLoadedRef.current = true;
@@ -191,7 +210,7 @@ export default function App() {
       } catch { /* bad hash — ignore */ }
     }, 0);
     return () => clearTimeout(t);
-  }, [labs.shareLink, startChallenge]);
+  }, [startChallenge]);
 
   const handleShare = () => {
     const payload = {
@@ -242,6 +261,19 @@ export default function App() {
 
   // the game is won once the whole timeline is covered (the anchor alone never counts)
   const won = !!challenge && fullyCovered && people.length > (challenge.anchor ? 1 : 0) && !wonDismissed;
+
+  // daily chain: when a daily puzzle is won, the next one of the day starts
+  // automatically after a short countdown (the win banner can jump ahead too)
+  const todayPuzzles = useMemo(() => (daily ? dailyPuzzles(daily.dateKey, PRESENT) : []), [daily]);
+  const nextPuzzle = daily ? nextDaily(todayPuzzles, daily.n) : null;
+  const [autoCount, setAutoCount] = useState(null);
+  useEffect(() => {
+    if (!won || !nextPuzzle || wonDismissed) return;
+    const deadline = Date.now() + 4000;
+    const iv = setInterval(() => setAutoCount(Math.max(0, Math.ceil((deadline - Date.now()) / 1000))), 500);
+    const t = setTimeout(() => { setAutoCount(null); startChallenge(dailyDef(daily.dateKey, nextPuzzle)); }, 4000);
+    return () => { clearInterval(iv); clearTimeout(t); };
+  }, [won, nextPuzzle, wonDismissed, daily, startChallenge]);
 
   const rangeStats = challengeRange ? computeCoverage(people, bounds, challengeRange) : null;
   const rangeFullyCovered = rangeStats ? rangeStats.gaps.length === 0 : false;
@@ -390,14 +422,17 @@ export default function App() {
     // daily puzzle: submit the finished run to the local leaderboard (best only)
     if (daily && wonAfter && !won) submitDaily(daily, withNew.length);
 
-    // records lab: persist fewest-people bests per challenge / gap range
-    if (labs.records && challenge) {
+    // standard feature: persist fewest-people bests per challenge / gap range
+    if (challenge) {
       let recs = records;
       let changed = false;
       if (wonAfter && !won) {
         const r = recordResult(recs, challenge.key, withNew.length);
         recs = r.records; changed = true;
         if (r.isRecord) setNotice(`🏅 New record (${challenge.name}): ${withNew.length} people!`);
+        if (challenge.tutorial) {
+          try { localStorage.setItem(TUTORIAL_DONE_KEY, "1"); } catch { /* private mode */ }
+        }
       }
       if (challengeRange) {
         const rangeHadGaps = computeCoverage(people, bounds, challengeRange).gaps.length > 0;
@@ -434,23 +469,69 @@ export default function App() {
   };
 
   const backToMenu = () => {
-    if (people.length > (challenge?.anchor ? 1 : 0) && !window.confirm("Leave this challenge? Unsaved progress will be lost.")) return;
+    if (people.length > (challenge?.anchor ? 1 : 0) && !window.confirm("Leave this challenge? Your progress is autosaved — you can continue from the home screen.")) return;
     setScreen("start"); setChallenge(null); setPeople([]); setLoadError("");
   };
 
   // ------------------------------------------------------------ save / load
   // v2 format: { version: 2, challenge: {...}, ids: [...], range?: [...] }
-  const handleSave = () => {
+  // Shared by the manual Save/Load file, the 🔗 share link and the autosave.
+  const serializeGame = () => {
+    if (!challenge) return null;
     const payload = {
       version: 2,
       challenge: {
         key: challenge.key, name: challenge.name, mode: challenge.mode,
         anchorId: challenge.anchorId, endId: challenge.endId, endYear: challenge.endYear,
         startYear: challenge.startYear, custom: challenge.custom, daily: challenge.daily,
+        tutorial: challenge.tutorial || undefined,
       },
       ids: people.filter(p => !isChallengePerson(p.id)).map(p => p.id),
     };
     if (challengeRange) payload.range = [Math.round(challengeRange[0]), Math.round(challengeRange[1])];
+    // small progress summary so the home screen can show "continue: N people, X%"
+    if (challenge.bounds) {
+      const { total } = computeCoverage(people, challenge.bounds);
+      const span = challenge.bounds[1] - challenge.bounds[0];
+      payload.progress = {
+        people: payload.ids.length,
+        coverPct: span > 0 ? Math.min(100, (total / span) * 100).toFixed(1) : "0.0",
+      };
+    }
+    return payload;
+  };
+
+  // parse a v2 (or legacy v1) payload into { def, ids, restoreRange }
+  const defFromPayload = (parsed) => {
+    if (!Array.isArray(parsed.ids)) throw new Error("Invalid format: no ids.");
+    let def, restoreRange = null;
+    if (parsed.version >= 2 && parsed.challenge) {
+      def = {
+        key: parsed.challenge.key || "custom",
+        name: parsed.challenge.name || "Loaded Challenge",
+        mode: parsed.challenge.mode ?? null,
+        anchorId: parsed.challenge.anchorId ?? null,
+        endId: parsed.challenge.endId ?? null,
+        endYear: parsed.challenge.endYear ?? null,
+        startYear: parsed.challenge.startYear ?? null,
+        custom: !!parsed.challenge.custom,
+        daily: parsed.challenge.daily ?? null,
+        tutorial: !!parsed.challenge.tutorial,
+      };
+      if (Array.isArray(parsed.range) && parsed.range.length === 2) {
+        restoreRange = [Number(parsed.range[0]), Number(parsed.range[1])];
+      }
+    } else {
+      // v1 files are the original challenge: Socrates → present, no restriction
+      def = { key: "classic", name: "The Classic", mode: null, anchorId: "Q913", endId: null, endYear: null, custom: false };
+    }
+    if (!def.anchorId && def.startYear == null) throw new Error("No starting person or year range.");
+    return { def, ids: parsed.ids, restoreRange };
+  };
+
+  const handleSave = () => {
+    const payload = serializeGame();
+    if (!payload) return;
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -458,36 +539,54 @@ export default function App() {
     URL.revokeObjectURL(url);
   };
 
+  // autosave: persist the in-progress game to localStorage on every change, so
+  // reopening the page — or going back to the home screen — can continue it
+  useEffect(() => {
+    if (screen !== "game" || !challenge) return;
+    const payload = serializeGame();
+    if (payload) saveAutosave(payload);
+  }, [screen, challenge, people, challengeRange]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // continue the autosaved game from the home screen
+  const continueSavedGame = useCallback(() => {
+    const saved = loadAutosave();
+    if (!saved) return;
+    setLoadError("");
+    try {
+      const { def, ids, restoreRange } = defFromPayload(saved);
+      startChallenge(def, ids, restoreRange).then(ok => {
+        if (ok) setNotice("👋 Continued your saved game.");
+      });
+    } catch (err) {
+      setLoadError("Could not restore the saved game: " + err.message);
+    }
+  }, [startChallenge]);
+
+  // restore the autosaved game on open (a #c= share link takes priority)
+  const autosaveRestoredRef = useRef(false);
+  useEffect(() => {
+    if (autosaveRestoredRef.current) return;
+    if (typeof window !== "undefined" && window.location.hash.startsWith("#c=")) return;
+    autosaveRestoredRef.current = true;
+    const saved = loadAutosave();
+    if (!saved) return;
+    const t = setTimeout(() => {
+      try {
+        const { def, ids, restoreRange } = defFromPayload(saved);
+        startChallenge(def, ids, restoreRange).then(ok => {
+          if (ok) setNotice("👋 Continued your saved game.");
+        });
+      } catch { /* bad autosave — ignore */ }
+    }, 0);
+    return () => clearTimeout(t);
+  }, [startChallenge]);
+
   const loadFile = async (file) => {
     setLoadingFile(true); setLoadError("");
     try {
       const text = await file.text();
       const parsed = JSON.parse(text);
-      const ids = parsed.ids;
-      if (!Array.isArray(ids)) throw new Error("Invalid file format.");
-
-      let def;
-      let restoreRange = null;
-      if (parsed.version >= 2 && parsed.challenge) {
-        def = {
-          key: parsed.challenge.key || "custom",
-          name: parsed.challenge.name || "Loaded Challenge",
-          mode: parsed.challenge.mode ?? null,
-          anchorId: parsed.challenge.anchorId ?? null,
-          endId: parsed.challenge.endId ?? null,
-          endYear: parsed.challenge.endYear ?? null,
-          startYear: parsed.challenge.startYear ?? null,
-          custom: !!parsed.challenge.custom,
-          daily: parsed.challenge.daily ?? null,
-        };
-        if (Array.isArray(parsed.range) && parsed.range.length === 2) {
-          restoreRange = [Number(parsed.range[0]), Number(parsed.range[1])];
-        }
-      } else {
-        // v1 files are the original challenge: Socrates → present, no restriction
-        def = { key: "classic", name: "The Classic", mode: null, anchorId: "Q913", endId: null, endYear: null, custom: false };
-      }
-      if (!def.anchorId && def.startYear == null) throw new Error("The file has no starting person or year range.");
+      const { def, ids, restoreRange } = defFromPayload(parsed);
       const preloaded = await startChallenge(def, ids, restoreRange);
       // a loaded daily that is already fully covered counts as a finished run
       if (def.daily && Array.isArray(preloaded) && preloaded.length > (def.anchorId ? 1 : 0) &&
@@ -526,12 +625,37 @@ export default function App() {
     borderRadius: 6, color: T.accent, cursor: "pointer", fontSize: 12, ...extra
   });
 
+  // ☰ menu entries (secondary actions) — plain descriptors; GameMenu maps keys
+  // to handlers, so no closures/ref access happen during render
+  const menuItems = [{ key: "back", label: "⏏ Back to menu" }];
+  if (view && bounds && (view[0] !== bounds[0] || view[1] !== bounds[1])) menuItems.push({ key: "resetZoom", label: "↺ Reset zoom" });
+  menuItems.push({ key: "save", label: "💾 Save to file" });
+  menuItems.push({ key: "share", label: "🔗 Copy share link" });
+  if (labs.undo) menuItems.push({ key: "undo", label: `↩ Undo${undoDepth > 0 ? ` (${undoDepth})` : ""}` });
+  if (challenge?.daily) menuItems.push({ key: "board", label: "🏆 Daily leaderboard" });
+  menuItems.push({ key: "clearSave", label: "🗑 Forget saved game" });
+
+  const onMenuAction = (key) => {
+    setMenuOpen(false);
+    if (key === "back") backToMenu();
+    else if (key === "resetZoom") setView([bounds[0], bounds[1]]);
+    else if (key === "save") handleSave();
+    else if (key === "share") handleShare();
+    else if (key === "undo") doUndo();
+    else if (key === "board") setBoardForModal(challenge.daily);
+    else if (key === "clearSave") { clearAutosave(); setNotice("🗑 Saved game forgotten — reopening the page starts fresh."); }
+  };
+
   // ------------------------------------------------------------ start screen
   if (screen === "start" || !challenge) {
+    // read the autosave here (read-only) so the home screen can offer "continue"
+    const savedGame = loadAutosave();
     return (
       <StartScreen
         T={T} dark={dark} setDark={setDark} mobile={mobile}
         onStart={(def) => startChallenge(def)}
+        onContinue={continueSavedGame}
+        continueGame={savedGame}
         onLoadFile={loadFile}
         loadError={loadError}
         busy={starting || loadingFile}
@@ -546,8 +670,9 @@ export default function App() {
     <div style={{ fontFamily: "system-ui,sans-serif", background: T.bg, minHeight: "100dvh", color: T.text, display: "flex", flexDirection: "column", touchAction: "manipulation" }}>
       {/* Sticky top */}
       <div style={{ position: "sticky", top: 0, zIndex: 50, background: T.bg, borderBottom: `1px solid ${T.border}`, padding: mobile ? "10px 12px 8px" : "14px 20px 10px" }}>
-        <div style={{ maxWidth: 920, margin: "0 auto" }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8, gap: 10 }}>
+        <div style={{ maxWidth: 1060, margin: "0 auto" }}>
+          {/* header: what this is (left) + theme & one menu (right) */}
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6, gap: 10 }}>
             <div style={{ minWidth: 0 }}>
               <h1 style={{ fontSize: mobile ? 15 : 17, fontWeight: 700, margin: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                 🕰️ {challenge.name}
@@ -557,56 +682,60 @@ export default function App() {
                   ? <>{challenge.anchor.label} ({yearLabel(bounds[0])}) → {challenge.end ? `${challenge.end.label} (${yearLabel(bounds[1])})` : `present (${yearLabel(bounds[1])})`}</>
                   : <>{yearLabel(bounds[0])} → {yearLabel(bounds[1])}</>}
                 {challenge.mode && <> · <strong style={{ color: T.accent }}>{CATEGORIES[challenge.mode].label}</strong> only</>}
-                {challenge.daily && <> · 📅 {challenge.daily.dateKey} #{challenge.daily.n}</>}
+                {challenge.daily && <> · 📅 {challenge.daily.dateKey} · puzzle #{challenge.daily.n}/3</>}
               </div>
             </div>
-            {mobile ? (
-              <div style={{ display: "flex", gap: 6, alignItems: "center", flexShrink: 0 }}>
-                <button style={btnStyle()} onClick={() => setMenuOpen(o => !o)} title="More actions" aria-label="More actions">☰</button>
-                <button style={btnStyle()} onClick={() => setDark(d => !d)}>{dark ? "☀️" : "🌙"}</button>
-              </div>
-            ) : (
-              <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", justifyContent: "flex-end" }}>
-                <button style={btnStyle()} onClick={backToMenu} title="Back to challenge selection">⏏ Menu</button>
-                {(view[0] !== bounds[0] || view[1] !== bounds[1]) &&
-                  <button style={btnStyle()} onClick={() => setView([bounds[0], bounds[1]])}>↺ Reset zoom</button>}
-                <button style={btnStyle()} onClick={handleSave} title="Save progress to file">💾 Save</button>
-                <button style={btnStyle({ opacity: loadingFile ? 0.6 : 1 })} onClick={() => fileInputRef.current?.click()} disabled={loadingFile} title="Load progress from file">
-                  {loadingFile ? "⏳ Loading…" : "📂 Load"}
-                </button>
-                {labs.shareLink && <button style={btnStyle()} onClick={handleShare} title="Copy a link that loads this exact game">🔗 Share</button>}
-                {labs.undo && <button style={btnStyle({ opacity: undoDepth ? 1 : 0.4 })} onClick={doUndo} title="Undo last add/remove (Ctrl+Z)">↩</button>}
-                {challenge.daily && <button style={btnStyle()} onClick={() => setBoardForModal(challenge.daily)} title="Daily leaderboard">🏆</button>}
-                <button style={btnStyle()} onClick={() => setShowLabs(true)} title="Toggle experiments (labs)">🧪 Labs{activeLabIds.length > 0 ? ` ${activeLabIds.length}` : ""}</button>
-                <button style={btnStyle()} onClick={() => setDark(d => !d)}>{dark ? "☀️" : "🌙"}</button>
-              </div>
+            <div style={{ display: "flex", gap: 6, alignItems: "center", flexShrink: 0, position: "relative" }}>
+              <button style={btnStyle()} onClick={() => setDark(d => !d)} title="Toggle light/dark">{dark ? "☀️" : "🌙"}</button>
+              <button style={btnStyle({ fontWeight: 700 })} onClick={() => setMenuOpen(o => !o)} title="Menu — save/load/share/labs/…" aria-label="Menu">☰</button>
+              {menuOpen && (
+                <GameMenu
+                  T={T} items={menuItems} loadingFile={loadingFile}
+                  onAction={onMenuAction} onClose={() => setMenuOpen(false)}
+                  fileInput={<input ref={fileInputRef} type="file" accept=".json" style={{ display: "none" }}
+                    onChange={e => { const f = e.target.files?.[0]; if (f) { e.target.value = ""; setMenuOpen(false); loadFile(f); } }} />}
+                />
+              )}
+            </div>
+          </div>
+
+          {/* status strip: what is happening right now */}
+          <div style={{ display: "flex", alignItems: "center", gap: 10, margin: "2px 0 10px", flexWrap: "wrap" }}>
+            <div style={{ flex: 1, minWidth: 140, height: 8, background: T.border, borderRadius: 4, overflow: "hidden" }}>
+              <div style={{ height: "100%", width: `${coverPct}%`, background: fullyCovered ? "#5bb86a" : "#4f86c6", borderRadius: 4, transition: "width 0.4s" }} />
+            </div>
+            <strong style={{ fontSize: mobile ? 15 : 17, color: fullyCovered ? "#5bb86a" : T.text, minWidth: 52 }}>{coverPct}%</strong>
+            <span style={{ fontSize: 12, color: T.muted }}>
+              {fullyCovered
+                ? <span style={{ color: "#5bb86a", fontWeight: 700 }}>fully covered 🎉</span>
+                : <>{gaps.length} {gaps.length === 1 ? "gap" : "gaps"} left{largestGap && <> — biggest {Math.round(largestGap[1] - largestGap[0])}y ({yearLabel(Math.round(largestGap[0]))}–{yearLabel(Math.round(largestGap[1]))})</>}</>}
+              {" · "}{people.length} {people.length === 1 ? "person" : "people"}
+            </span>
+            {par && <span style={{ fontSize: 10, color: T.faint, border: `1px solid ${T.border2}`, borderRadius: 8, padding: "1px 6px" }} title="Approximate minimum people for this challenge (labs)">par {par}</span>}
+            {labs.budget && opts.budget > 0 && <span style={{ fontSize: 10, color: T.muted, border: `1px solid ${T.border2}`, borderRadius: 8, padding: "1px 6px" }} title="Budget cap (labs)">{people.length}/{opts.budget} 👥</span>}
+            {labs.gapChain && chain > 0 && <span style={{ fontSize: 10, fontWeight: 700, color: T.accent, border: `1px solid ${T.accentBorder}`, borderRadius: 8, padding: "1px 6px" }} title="Consecutive gaps bridged (labs)">⛓ chain ×{chain}</span>}
+            {labs.gapChallenge && gaps.length > 0 && !fullyCovered && !labs.mysteryGaps && largestGap && (
+              <button onClick={() => startGapChallenge(largestGap[0], largestGap[1])} style={{ ...btnStyle({ padding: "2px 8px" }), fontSize: 10 }} title="Start a gap challenge on the largest gap">
+                🎯 challenge this gap
+              </button>
+            )}
+            {labs.mysteryGaps && gaps.length > 0 && !fullyCovered && (
+              <span style={{ fontSize: 10, color: T.gapDash }} title="Gap regions hidden by the mystery-gaps lab">❓ {gaps.length} {gaps.length === 1 ? "gap" : "gaps"}</span>
             )}
           </div>
-          {/* mobile ☰ menu: all actions in a wrapping row */}
-          {mobile && menuOpen && (
-            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 8 }}>
-              <button style={btnStyle()} onClick={() => { setMenuOpen(false); backToMenu(); }}>⏏ Menu</button>
-              {(view[0] !== bounds[0] || view[1] !== bounds[1]) &&
-                <button style={btnStyle()} onClick={() => { setMenuOpen(false); setView([bounds[0], bounds[1]]); }}>↺ Reset zoom</button>}
-              <button style={btnStyle()} onClick={handleSave}>💾 Save</button>
-              <button style={btnStyle({ opacity: loadingFile ? 0.6 : 1 })} onClick={() => fileInputRef.current?.click()} disabled={loadingFile}>
-                {loadingFile ? "⏳ Loading…" : "📂 Load"}
-              </button>
-              {labs.shareLink && <button style={btnStyle()} onClick={handleShare}>🔗 Share</button>}
-              {labs.undo && <button style={btnStyle({ opacity: undoDepth ? 1 : 0.4 })} onClick={doUndo}>↩ Undo</button>}
-              {challenge.daily && <button style={btnStyle()} onClick={() => { setMenuOpen(false); setBoardForModal(challenge.daily); }}>🏆 Board</button>}
-              <button style={btnStyle()} onClick={() => { setMenuOpen(false); setShowLabs(true); }}>🧪 Labs{activeLabIds.length > 0 ? ` ${activeLabIds.length}` : ""}</button>
-            </div>
-          )}
-          <input ref={fileInputRef} type="file" accept=".json" style={{ display: "none" }}
-            onChange={e => { const f = e.target.files?.[0]; if (f) { e.target.value = ""; loadFile(f); } }} />
 
-          {/* Input */}
+          {/* Input — the main action: add a person to cover the timeline */}
           <div style={{ position: "relative", marginBottom: 8 }}>
             <input ref={inputRef} value={inputVal} onChange={e => handleInput(e.target.value)} onKeyDown={handleKeyDown}
-              placeholder={challenge.mode ? `Search for a person — ${CATEGORIES[challenge.mode].label} only…` : "Search for a historical person…"}
+              placeholder={won
+                ? "Timeline covered 🎉"
+                : largestGap
+                  ? `Add someone who was alive in ${yearLabel(Math.round(largestGap[0]))}–${yearLabel(Math.round(largestGap[1]))}…`
+                  : challenge.mode
+                    ? `Search for a person — ${CATEGORIES[challenge.mode].label} only…`
+                    : "🔍 Search for a historical person to add…"}
               disabled={!!fetchingId || won} autoComplete="off"
-              style={{ width: "100%", boxSizing: "border-box", padding: "8px 14px", fontSize: 14, background: T.surface, border: `1px solid ${T.border2}`, borderRadius: 8, color: T.text, outline: "none" }}
+              style={{ width: "100%", boxSizing: "border-box", padding: mobile ? "10px 14px" : "11px 16px", fontSize: mobile ? 15 : 16, background: T.surface, border: `2px solid ${T.accentBorder}`, borderRadius: 10, color: T.text, outline: "none" }}
             />
             {(loading || fetchingId) && <span style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)", color: T.muted, fontSize: 12 }}>{fetchingId ? "Loading…" : "Searching…"}</span>}
             {suggestions.length > 0 && (
@@ -642,7 +771,9 @@ export default function App() {
           {/* Timeline */}
           <Timeline
             people={people} view={view} setView={setView} bounds={bounds} gaps={gaps}
-            range={challengeRange} onGapClick={labs.mysteryGaps ? () => {} : startGapChallenge}
+            range={challengeRange}
+            onGapClick={labs.gapChallenge && !labs.mysteryGaps ? startGapChallenge : () => {}}
+            gapsClickable={!!labs.gapChallenge && !labs.mysteryGaps}
             hideGaps={labs.mysteryGaps} mobile={mobile}
             wikiTitles={wikiTitles} onSelectPerson={setSelectedPerson} T={T}
           />
@@ -656,25 +787,6 @@ export default function App() {
               title={`Visible span: ${Math.round(viewSpan)} years`} />
             <button style={btnStyle({ padding: "2px 8px" })} onClick={() => setZoomSpan(Math.min(SPAN, viewSpan * 1.6))} title="Zoom out">－</button>
             <span style={{ fontSize: 10, color: T.faint, minWidth: 70, textAlign: "right" }}>{viewSpan >= SPAN ? "full timeline" : `${Math.round(viewSpan)}y span`}</span>
-          </div>
-
-          {/* Coverage bar */}
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <div style={{ flex: 1, height: 6, background: T.border, borderRadius: 3, overflow: "hidden" }}>
-              <div style={{ height: "100%", width: `${coverPct}%`, background: fullyCovered ? "#5bb86a" : "#4f86c6", borderRadius: 3, transition: "width 0.4s" }} />
-            </div>
-            <span style={{ fontSize: 12, color: fullyCovered ? "#5bb86a" : T.muted, minWidth: 44 }}>{coverPct}%</span>
-            {par && <span style={{ fontSize: 10, color: T.faint, border: `1px solid ${T.border2}`, borderRadius: 8, padding: "1px 6px" }} title="Approximate minimum people for this challenge (labs)">par {par}</span>}
-            {labs.budget && opts.budget > 0 && <span style={{ fontSize: 10, color: T.muted, border: `1px solid ${T.border2}`, borderRadius: 8, padding: "1px 6px" }} title="Budget cap (labs)">{people.length}/{opts.budget} 👥</span>}
-            {labs.gapChain && chain > 0 && <span style={{ fontSize: 10, fontWeight: 700, color: T.accent, border: `1px solid ${T.accentBorder}`, borderRadius: 8, padding: "1px 6px" }} title="Consecutive gaps bridged (labs)">⛓ chain ×{chain}</span>}
-            {gaps.length > 0 && !fullyCovered && !labs.mysteryGaps && largestGap && (
-              <button onClick={() => startGapChallenge(largestGap[0], largestGap[1])} style={{ ...btnStyle({ padding: "2px 8px" }), fontSize: 10 }} title="Start a gap challenge on the largest gap">
-                🎯 largest gap: {yearLabel(Math.round(largestGap[0]))}–{yearLabel(Math.round(largestGap[1]))}
-              </button>
-            )}
-            {labs.mysteryGaps && gaps.length > 0 && !fullyCovered && (
-              <span style={{ fontSize: 10, color: T.gapDash }} title="Gap regions hidden by the mystery-gaps lab">❓ {gaps.length} {gaps.length === 1 ? "gap" : "gaps"}</span>
-            )}
           </div>
 
           {/* 💡 bridger suggestions (labs) */}
@@ -693,24 +805,15 @@ export default function App() {
             </div>
           )}
 
-          {/* active lab chips */}
-          {activeLabIds.length > 0 && (
-            <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginBottom: 6 }}>
-              {activeLabIds.map(id => (
-                <span key={id} style={{ fontSize: 9, padding: "1px 7px", borderRadius: 8, background: T.accentBg, color: T.accent, border: `1px solid ${T.accentBorder}` }}>
-                  🧪 {LAB_DEFS.find(d => d.id === id)?.name}
-                </span>
-              ))}
-            </div>
-          )}
         </div>
       </div>
 
       {/* Scrollable list */}
       <div style={{ flex: 1, overflowY: "auto", padding: mobile ? "10px 12px 20px" : "14px 20px 24px" }}>
-        <div style={{ maxWidth: 920, margin: "0 auto" }}>
+        <div style={{ maxWidth: 1060, margin: "0 auto" }}>
 
-          {/* gap challenge */}
+          {/* gap challenge (🧪 lab) */}
+          {labs.gapChallenge && (
           <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10, padding: "12px 16px", marginBottom: 16 }}>
             <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
               <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: 1, color: T.muted, textTransform: "uppercase" }}>🎯 Gap challenge</span>
@@ -736,6 +839,20 @@ export default function App() {
               </div>
             )}
           </div>
+          )}
+
+          {/* tutorial coach banner */}
+          {challenge.tutorial && !won && (
+            <div style={{ background: T.accentBg, border: `1px solid ${T.accentBorder}`, borderRadius: 10, padding: "12px 16px", marginBottom: 16, fontSize: 13, color: T.text }}>
+              <div style={{ fontWeight: 800, marginBottom: 4 }}>👋 Tutorial — bridge two lives</div>
+              <div style={{ color: T.muted, lineHeight: 1.5 }}>
+                The timeline runs from <strong style={{ color: T.text }}>{challenge.anchor?.label}'s birth ({yearLabel(bounds[0])})</strong> to{" "}
+                <strong style={{ color: T.text }}>{challenge.end?.label}'s life ({yearLabel(challenge.end?.birth ?? bounds[1])}–{yearLabel(bounds[1])})</strong>.
+                Every single year in between must be covered by someone who was alive — the <span style={{ color: "#e05454", fontWeight: 700 }}>red stretch</span> is the gap between their lives.
+                Search for a person who lived across it (try <em>“Madonna”</em>) and click them to add their lifespan. Cover everything to win!
+              </div>
+            </div>
+          )}
 
           {won && (
             <div style={{ background: T.win, border: `1px solid ${T.winBorder}`, borderRadius: 12, padding: "16px 20px", textAlign: "center", marginBottom: 16 }}>
@@ -747,20 +864,34 @@ export default function App() {
                 {people.length > 6 && people.length <= 12 && " Great job!"}
                 {people.length > 12 && " Can you do it with fewer?"}
               </div>
-              {(par || (labs.records && records[challenge.key] !== undefined) || (labs.budget && opts.budget > 0)) && (
+              {(par || records[challenge.key] !== undefined || (labs.budget && opts.budget > 0)) && (
                 <div style={{ fontSize: 12, marginTop: 4, color: T.muted }}>
                   {par && <span style={{ marginRight: 10 }}>{medalFor(people.length, par)} par {par} · you: {people.length}</span>}
-                  {labs.records && records[challenge.key] !== undefined && <span style={{ marginRight: 10 }}>🏅 your best: {records[challenge.key]}</span>}
+                  {records[challenge.key] !== undefined && <span style={{ marginRight: 10 }}>🏅 your best: {records[challenge.key]}</span>}
                   {labs.budget && opts.budget > 0 && <span>{people.length <= opts.budget ? "🏆 within budget" : "over budget"} ({opts.budget})</span>}
                 </div>
               )}
-              {challenge.daily && (
-                <button onClick={() => setBoardForModal(challenge.daily)}
-                  style={{ marginTop: 10, padding: "7px 18px", background: T.accentBg, border: `1px solid ${T.accentBorder}`, borderRadius: 6, color: T.accent, fontWeight: 700, cursor: "pointer", fontSize: 13, ...(mobile ? { display: "block", width: "100%" } : {}) }}>
-                  🏆 Leaderboard
+              {challenge.tutorial && (
+                <div style={{ fontSize: 13, color: T.muted, marginTop: 4 }}>🎓 Tutorial complete — pick any challenge below!</div>
+              )}
+              {nextPuzzle && (
+                <button onClick={() => startChallenge(dailyDef(daily.dateKey, nextPuzzle))}
+                  style={{ marginTop: 10, padding: "8px 20px", background: "#5bb86a", border: "none", borderRadius: 6, color: "#0f1117", fontWeight: 800, cursor: "pointer", fontSize: 14, ...(mobile ? { display: "block", width: "100%" } : {}) }}>
+                  ▶ Next puzzle #{nextPuzzle.n}: {nextPuzzle.anchorLabel} → {nextPuzzle.endLabel} (auto in {autoCount ?? 4}s)
                 </button>
               )}
-              <button onClick={() => setWonDismissed(true)} style={{ marginTop: 10, padding: "7px 18px", background: "#5bb86a", border: "none", borderRadius: 6, color: "#0f1117", fontWeight: 700, cursor: "pointer", fontSize: 13, ...(mobile ? { display: "block", width: "100%" } : {}) }}>Keep playing</button>
+              {challenge.daily && !nextPuzzle && (
+                <button onClick={() => setBoardForModal(challenge.daily)}
+                  style={{ marginTop: 10, padding: "7px 18px", background: T.accentBg, border: `1px solid ${T.accentBorder}`, borderRadius: 6, color: T.accent, fontWeight: 700, cursor: "pointer", fontSize: 13, ...(mobile ? { display: "block", width: "100%" } : {}) }}>
+                  🏆 Leaderboard — all 3 done!
+                </button>
+              )}
+              {!nextPuzzle && (
+                <button onClick={() => setWonDismissed(true)} style={{ marginTop: 10, padding: "7px 18px", background: "#5bb86a", border: "none", borderRadius: 6, color: "#0f1117", fontWeight: 700, cursor: "pointer", fontSize: 13, ...(mobile ? { display: "block", width: "100%" } : {}) }}>Keep playing</button>
+              )}
+              {nextPuzzle && (
+                <button onClick={() => setWonDismissed(true)} style={{ marginTop: 10, marginLeft: mobile ? 0 : 6, padding: "7px 18px", background: "transparent", border: `1px solid ${T.winBorder}`, borderRadius: 6, color: T.text, cursor: "pointer", fontSize: 13, ...(mobile ? { display: "block", width: "100%" } : {}) }}>Stay here</button>
+              )}
               <button onClick={backToMenu} style={{ marginTop: 10, marginLeft: mobile ? 0 : 6, padding: "7px 18px", background: "transparent", border: `1px solid ${T.winBorder}`, borderRadius: 6, color: T.text, cursor: "pointer", fontSize: 13, ...(mobile ? { display: "block", width: "100%" } : {}) }}>New challenge</button>
             </div>
           )}
@@ -824,10 +955,6 @@ export default function App() {
 
       {selectedPerson && (
         <PersonCard person={selectedPerson} allPeople={people} onClose={() => setSelectedPerson(null)} onSelectPerson={p => setSelectedPerson(p)} marginal={marginal[selectedPerson.id] ?? null} mobile={mobile} T={T} />
-      )}
-
-      {showLabs && (
-        <LabsPanel T={T} labs={labs} opts={opts} mobile={mobile} onToggle={toggleLab} onOpt={setOpt} onPlayset={applyPlayset} onClose={() => setShowLabs(false)} />
       )}
 
       {boardForModal && (

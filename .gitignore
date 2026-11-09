@@ -27,3 +27,6 @@ dist-ssr
 solver/cache/
 solver/fetch.log
 __pycache__/
+
+# Well-known dataset fetch cache (scripts/fetch-wellknown.mjs)
+scripts/cache-wellknown/

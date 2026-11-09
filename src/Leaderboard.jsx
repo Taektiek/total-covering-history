@@ -13,7 +13,7 @@ export default function Leaderboard({ T, mobile, dateKey, n, entries, highlightI
         </div>
         <div style={{ fontSize: 11, color: T.muted, marginBottom: 12 }}>
           Best-only leaderboard, stored in this browser: fewest people wins, ties broken by time.
-          Compare with friends via the 🔗 share links (Labs). The store is isolated in <code>src/daily.js</code> if a shared backend is added later.
+          Compare with friends via the 🔗 share links. The store is isolated in <code>src/daily.js</code> if a shared backend is added later.
         </div>
         {entries.length === 0 ? (
           <div style={{ fontSize: 13, color: T.muted, fontStyle: "italic" }}>No solution recorded yet — finish the puzzle to appear here.</div>
